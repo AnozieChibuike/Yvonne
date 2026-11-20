@@ -538,11 +538,11 @@ export function CalendarDashboard({
             </p>
           </div>
           <div className="header-actions">
-            <Button onClick={() => openCreate("task")} variant="outline">
-              <Plus data-icon="inline-start" aria-hidden="true" />
-              Add task
-            </Button>
-            <Button onClick={() => openCreate(view === "reminders" ? "reminder" : "event")}>
+            <Button
+              onClick={() =>
+                openCreate(view === "tasks" ? "task" : view === "reminders" ? "reminder" : "event")
+              }
+            >
               <Plus data-icon="inline-start" aria-hidden="true" />
               New item
             </Button>
@@ -584,7 +584,6 @@ export function CalendarDashboard({
                     const today = dateKeyToCalendarDate(toLagosDate(new Date()));
                     setSelectedDate(today);
                     setVisibleMonth(monthStart(today));
-                    setMobileCalendarExpanded(false);
                   }}
                   size="sm"
                   variant="outline"
@@ -638,7 +637,6 @@ export function CalendarDashboard({
                     if (date) {
                       setSelectedDate(date);
                       setVisibleMonth(monthStart(date));
-                      setMobileCalendarExpanded(false);
                     }
                   }}
                   selected={selectedDate}
