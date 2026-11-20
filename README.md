@@ -90,7 +90,15 @@ To configure it:
 2. Create the owner's email/password account in Supabase Auth. Public sign-up is not implemented; only `YVONNE_WEB_ALLOWED_EMAIL` is permitted by the app.
 3. Copy [`web/.env.example`](./web/.env.example) to `web/.env.local` and set the Supabase project URL, anon key, service-role key, allowed email, and the exact `user_jid` used by the bot for your WhatsApp account. Keep the service-role key server-only; never use a `NEXT_PUBLIC_` prefix for it.
 4. Run the app locally with `cd web && npm install && npm run dev`, or deploy to Vercel with `web/` as the project root and the same environment variables configured in Vercel.
-5. Set `YVONNE_WEB_URL` in the bot VPS environment to the deployed app URL to enable private item links from WhatsApp. Item links require sign-in and return to the requested task, reminder, or event.
+5. On the VPS, add `YVONNE_WEB_URL=https://yvonne-self.vercel.app` to `/opt/yvonne/.env` to enable private item links from WhatsApp. Then restart and check the service:
+
+   ```sh
+   sudo nano /opt/yvonne/.env
+   sudo systemctl restart yvonne
+   sudo systemctl status yvonne --no-pager
+   ```
+
+   Item links require sign-in and return to the requested task, reminder, or event.
 
 The Next.js API verifies the signed-in email against the allowlist and scopes database operations to `YVONNE_WEB_USER_JID`. The browser only receives the Supabase public/anon key; the service-role key is used by server-side API routes only. The app does not apply the database migration or provision the Auth user automatically.
 
