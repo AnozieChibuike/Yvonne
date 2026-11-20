@@ -42,8 +42,8 @@ async function main() {
   const assistant = new YvonneAssistant(groq, toolRegistry, config.groq.model);
   const defaultCheckins = getDefaultCheckinSettings();
 
-  for (const number of config.whatsapp.allowedNumbers) {
-    await dataService.ensureDefaultCheckins(`${number}@s.whatsapp.net`, defaultCheckins);
+  for (const userJid of config.whatsapp.allowedJids) {
+    await dataService.ensureDefaultCheckins(userJid, defaultCheckins);
   }
 
   let currentSocket = null;
@@ -59,7 +59,7 @@ async function main() {
     }
   );
   startCheckinScheduler({
-    allowedNumbers: config.whatsapp.allowedNumbers,
+    allowedJids: config.whatsapp.allowedJids,
     dataService,
     getSocket: () => currentSocket
   });

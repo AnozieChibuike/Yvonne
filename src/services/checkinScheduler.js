@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { config, normalizePhoneNumber } from '../config/env.js';
+import { config } from '../config/env.js';
 
 const checkinPrompts = {
   morning: 'Good morning. What would make today feel like a good day, and what is your top priority?',
@@ -41,9 +41,8 @@ export function createCheckinMessage(checkinType, tasks) {
   return `${checkinPrompts[checkinType]}${tasksSection}`;
 }
 
-export async function runCheckinTick({ allowedNumbers, dataService, getSocket, now = new Date() }) {
-  for (const number of allowedNumbers) {
-    const userJid = `${normalizePhoneNumber(number)}@s.whatsapp.net`;
+export async function runCheckinTick({ allowedJids, dataService, getSocket, now = new Date() }) {
+  for (const userJid of allowedJids) {
     let settings;
     try {
       settings = await dataService.getCheckinSettings(userJid);
@@ -88,9 +87,9 @@ export async function runCheckinTick({ allowedNumbers, dataService, getSocket, n
   }
 }
 
-export function startCheckinScheduler({ allowedNumbers, dataService, getSocket }) {
+export function startCheckinScheduler({ allowedJids, dataService, getSocket }) {
   return cron.schedule('* * * * *', async () => {
-    await runCheckinTick({ allowedNumbers, dataService, getSocket });
+    await runCheckinTick({ allowedJids, dataService, getSocket });
   }, { noOverlap: true });
 }
 

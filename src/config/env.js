@@ -8,9 +8,14 @@ export function normalizePhoneNumber(phone) {
 }
 
 const rawAllowed = process.env.ALLOWED_NUMBERS || '';
-const allowedNumbers = rawAllowed
+const allowedJids = rawAllowed
   .split(',')
-  .map(num => normalizePhoneNumber(num.trim()))
+  .map(value => {
+    const entry = value.trim();
+    const isLid = /@lid$/i.test(entry);
+    const identifier = normalizePhoneNumber(entry.replace(/@lid$/i, ''));
+    return identifier ? `${identifier}@${isLid ? 'lid' : 's.whatsapp.net'}` : '';
+  })
   .filter(Boolean);
 
 export const config = {
@@ -31,7 +36,7 @@ export const config = {
   },
   whatsapp: {
     authDir: path.resolve(process.cwd(), 'auth_info_baileys'),
-    allowedNumbers
+    allowedJids
   },
   checkins: {
     timezone: process.env.CHECKIN_TIMEZONE || 'Africa/Lagos',
@@ -43,9 +48,12 @@ export const config = {
 };
 
 export function isAllowedSender(jid) {
-  if (!jid || config.whatsapp.allowedNumbers.length === 0) return false;
-  const senderNumber = jid.split('@')[0].split(':')[0].replace(/\D/g, '');
-  return config.whatsapp.allowedNumbers.includes(senderNumber);
+  if (!jid || config.whatsapp.allowedJids.length === 0) return false;
+  const [rawIdentifier, server] = jid.split('@');
+  if (!server) return false;
+  const identifier = rawIdentifier.split(':')[0].replace(/\D/g, '');
+  const canonicalServer = server.toLowerCase() === 'lid' ? 'lid' : 's.whatsapp.net';
+  return config.whatsapp.allowedJids.includes(`${identifier}@${canonicalServer}`);
 }
 
 export function validateAssistantConfig() {
@@ -58,8 +66,8 @@ export function validateAssistantConfig() {
     return false;
   }
 
-  if (config.whatsapp.allowedNumbers.length !== 1) {
-    console.error('ALLOWED_NUMBERS must contain exactly one WhatsApp number.');
+  if (config.whatsapp.allowedJids.length === 0) {
+    console.error('ALLOWED_NUMBERS must contain at least one WhatsApp number or LID.');
     return false;
   }
 

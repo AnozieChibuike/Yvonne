@@ -9,15 +9,27 @@ import {
   isCheckinDueNow,
   runCheckinTick
 } from '../src/services/checkinScheduler.js';
-import { isAllowedSender } from '../src/config/env.js';
+import { config, isAllowedSender } from '../src/config/env.js';
 
-test('only the configured WhatsApp sender is allowlisted', () => {
-  const allowedNumber = process.env.ALLOWED_NUMBERS?.split(',')[0]?.replace(/\D/g, '');
-  assert.ok(allowedNumber);
-  assert.equal(isAllowedSender(`${allowedNumber}@s.whatsapp.net`), true);
-  assert.equal(isAllowedSender(`${allowedNumber}:12@s.whatsapp.net`), true);
+test('configured WhatsApp numbers and LIDs are allowlisted exactly', () => {
+  const allowedJid = config.whatsapp.allowedJids[0];
+  assert.ok(allowedJid);
+  const [allowedIdentifier, allowedServer] = allowedJid.split('@');
+  assert.equal(isAllowedSender(allowedJid), true);
+  assert.equal(isAllowedSender(`${allowedIdentifier}:12@${allowedServer}`), true);
   assert.equal(isAllowedSender('2340000000000@s.whatsapp.net'), false);
   assert.equal(isAllowedSender('120363000000000000@g.us'), false);
+});
+
+test('WhatsApp LIDs are matched using their LID server and retained for storage', () => {
+  const testLid = '9876543210@lid';
+  config.whatsapp.allowedJids.push(testLid);
+  try {
+    assert.equal(isAllowedSender(testLid), true);
+    assert.equal(isAllowedSender('9876543210@s.whatsapp.net'), false);
+  } finally {
+    config.whatsapp.allowedJids.pop();
+  }
 });
 
 test('sender authorization rejects unmatched JIDs', () => {
@@ -184,7 +196,7 @@ test('scheduler sends and records a matching local-time check-in once', async ()
     finishCheckin: async (...args) => finished.push(args)
   };
   const options = {
-    allowedNumbers: ['2347012345678'],
+    allowedJids: ['2347012345678@s.whatsapp.net'],
     dataService,
     getSocket: () => socket,
     now: new Date('2026-11-20T06:00:00.000Z')

@@ -4,7 +4,7 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 
 ## What it can do
 
-- Chat naturally over WhatsApp, restricted to the single number in `ALLOWED_NUMBERS`.
+- Chat naturally over WhatsApp, restricted to the numbers and LIDs in `ALLOWED_NUMBERS`.
 - Create, list, complete, and delete Supabase tasks; explicitly request Google Tasks to use that separate provider.
 - Transcribe incoming WhatsApp voice notes and reply with text.
 - Save preferences when you ask Yvonne to remember them.
@@ -27,7 +27,7 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
    npm install
    ```
 
-2. Copy `.env.example` to `.env` and set `GROQ_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and exactly one `ALLOWED_NUMBERS` value. Keep `.env` private; never paste credentials into chat or commit them.
+2. Copy `.env.example` to `.env` and set `GROQ_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and comma-separated `ALLOWED_NUMBERS`. Use international digits for phone numbers; include `@lid` for a WhatsApp LID. Keep `.env` private; never paste credentials into chat or commit them.
 3. In the Supabase SQL editor, run [`supabase/migrations/20261120100000_yvonne.sql`](./supabase/migrations/20261120100000_yvonne.sql). It creates the tasks, preferences, check-in settings, and delivery-tracking tables with row-level security enabled.
 4. Configure `CHECKIN_TIMEZONE` and the morning/daytime/evening times. Defaults are `Africa/Lagos`, `07:00`, `13:00`, and `21:00`. Yvonne seeds these defaults only for check-in types that do not already have saved settings.
 5. Start Yvonne:
@@ -38,7 +38,7 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 
 6. Scan the printed QR code from WhatsApp → Linked devices. Keep the process running on the VPS; the check-in scheduler runs inside it.
 
-The Supabase service-role key bypasses row-level security, so it must remain on the server and must never be embedded in a client app. Yvonne rejects startup unless exactly one number is configured in `ALLOWED_NUMBERS`; all other senders are rejected.
+The Supabase service-role key bypasses row-level security, so it must remain on the server and must never be embedded in a client app. Yvonne rejects startup unless at least one sender is configured in `ALLOWED_NUMBERS`; all other senders are rejected.
 
 ## Google Tasks (optional)
 
