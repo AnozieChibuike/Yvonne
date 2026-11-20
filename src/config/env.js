@@ -28,6 +28,9 @@ export const config = {
     url: process.env.SUPABASE_URL || '',
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || ''
   },
+  web: {
+    baseUrl: process.env.YVONNE_WEB_URL || ''
+  },
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',

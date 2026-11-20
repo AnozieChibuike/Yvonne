@@ -91,6 +91,37 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
+    functionTool('get_web_item_link', 'Create a private Yvonne web link to an existing Supabase task, reminder, or calendar event when the user asks to view it online. The link requires the user to sign in; never invent an item ID or use Google Tasks.', {
+      item_type: { type: 'string', enum: ['task', 'reminder', 'event'] },
+      item_id: { type: 'string', description: 'Exact item ID returned by a Yvonne data tool.' }
+    }, ['item_type', 'item_id']),
+    async ({ item_type, item_id }, { userJid }) => {
+      if (!['task', 'reminder', 'event'].includes(item_type)) {
+        throw new Error('The web link type must be task, reminder, or event.');
+      }
+      if (typeof item_id !== 'string' || !item_id.trim()) throw new Error('An exact item ID is required.');
+      if (!config.web.baseUrl) throw new Error('The Yvonne web app URL is not configured.');
+
+      const baseUrl = new URL(config.web.baseUrl);
+      if (baseUrl.protocol !== 'https:' && baseUrl.hostname !== 'localhost') {
+        throw new Error('The Yvonne web app URL must use HTTPS.');
+      }
+      const getItem = {
+        task: () => dataService.getTask(userJid, item_id),
+        reminder: () => dataService.getReminder(userJid, item_id),
+        event: () => dataService.getCalendarEvent(userJid, item_id)
+      }[item_type];
+      const item = await getItem();
+      if (!item) throw new Error(`That ${item_type} was not found.`);
+
+      return {
+        title: item.title,
+        url: `${baseUrl.origin}/item/${item_type}/${encodeURIComponent(item.id)}`
+      };
+    }
+  );
+
+  registry.register(
     functionTool('add_task', 'Create a to-do task, which may have no due date. A task due date does not send a WhatsApp alert. For a scheduled notification, use create_reminder instead.', {
       title: { type: 'string', description: 'Short task title.' },
       notes: { type: 'string', description: 'Optional task details.' },
@@ -190,11 +221,11 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
-    functionTool('create_reminder', 'Create a scheduled WhatsApp notification, separate from the task list. Use when the user asks to be reminded or asks for an alarm. Use Africa/Lagos local time. If the date or exact time is ambiguous, ask before calling this. Ordinary reminders default to one-time; daily/weekly recurrence must be explicitly requested.', {
+    functionTool('create_reminder', 'Create a scheduled WhatsApp notification, separate from the task list. Use when the user asks to be reminded or asks for an alarm. Use Africa/Lagos local time. If the date or exact time is ambiguous, ask before calling this. Ordinary reminders default to one-time; a repeat schedule must be explicitly requested.', {
       title: { type: 'string', description: 'What to remind the user about.' },
       remind_at: { type: 'string', description: 'ISO 8601 date-time including an explicit timezone offset, interpreted as Africa/Lagos local time.' },
       kind: { type: 'string', enum: ['reminder', 'alarm'], description: 'Use alarm only when the user calls it an alarm.' },
-      recurrence: { type: 'string', enum: ['once', 'daily', 'weekly'], description: 'Default once. Use daily or weekly only when explicitly requested.' }
+      recurrence: { type: 'string', enum: ['once', 'daily', 'weekly', 'monthly', 'yearly'], description: 'Default once. Repeat only when explicitly requested.' }
     }, ['title', 'remind_at']),
     async ({ title, remind_at, kind = 'reminder', recurrence = 'once' }, { userJid }) => {
       if (typeof title !== 'string' || !title.trim()) throw new Error('Reminder title cannot be empty.');
@@ -205,7 +236,9 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
         throw new Error('That reminder time is in the past. Ask the user for a future time.');
       }
       if (!['reminder', 'alarm'].includes(kind)) throw new Error('Reminder kind must be reminder or alarm.');
-      if (!['once', 'daily', 'weekly'].includes(recurrence)) throw new Error('Recurrence must be once, daily, or weekly.');
+      if (!['once', 'daily', 'weekly', 'monthly', 'yearly'].includes(recurrence)) {
+        throw new Error('Recurrence must be once, daily, weekly, monthly, or yearly.');
+      }
       const reminder = await dataService.createReminder(userJid, {
         title,
         remindAt: remind_at,

@@ -80,6 +80,20 @@ Tasks and reminders are separate: a task is a to-do that can have no due date, w
 
 Yvonne starts a short onboarding after your first interaction; each answer is staged and saved only after you confirm it. Use `!skip` to stop or `!onboard` to start again. You can also ask naturally, for example: “Remember that I prefer short meetings,” “Add a task to renew my passport,” or “Move my evening check-in to 9:30 pm.” Supabase is the default task provider; Google Tasks stays separate.
 
+## Private web calendar
+
+The Next.js calendar app lives in [`web/`](./web). It brings tasks, reminders, alarms, and events together on a calendar, supports task lists and tags, and can schedule WhatsApp alerts through the running Yvonne VPS. Calendar and reminder times use `Africa/Lagos`.
+
+To configure it:
+
+1. Apply [`supabase/migrations/20261121120000_yvonne_web_calendar.sql`](./supabase/migrations/20261121120000_yvonne_web_calendar.sql) to the existing Supabase project. This migration adds the calendar, task-list, recurrence, and linked-alert fields.
+2. Create the owner's email/password account in Supabase Auth. Public sign-up is not implemented; only `YVONNE_WEB_ALLOWED_EMAIL` is permitted by the app.
+3. Copy [`web/.env.example`](./web/.env.example) to `web/.env.local` and set the Supabase project URL, anon key, service-role key, allowed email, and the exact `user_jid` used by the bot for your WhatsApp account. Keep the service-role key server-only; never use a `NEXT_PUBLIC_` prefix for it.
+4. Run the app locally with `cd web && npm install && npm run dev`, or deploy to Vercel with `web/` as the project root and the same environment variables configured in Vercel.
+5. Set `YVONNE_WEB_URL` in the bot VPS environment to the deployed app URL to enable private item links from WhatsApp. Item links require sign-in and return to the requested task, reminder, or event.
+
+The Next.js API verifies the signed-in email against the allowlist and scopes database operations to `YVONNE_WEB_USER_JID`. The browser only receives the Supabase public/anon key; the service-role key is used by server-side API routes only. The app does not apply the database migration or provision the Auth user automatically.
+
 ## Adding a tool
 
 Register a tool in `src/assistant/tools.js` with a JSON-schema function definition and an async handler. The handler receives its arguments and a `{ userJid }` context. Keep provider/service logic out of `src/whatsapp/handler.js`; that module should remain the channel adapter.

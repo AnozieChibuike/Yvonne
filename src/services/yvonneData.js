@@ -1,3 +1,7 @@
+import { getNextCalendarEventAlert, getNextReminderTime } from './recurrence.js';
+
+export { getNextReminderTime } from './recurrence.js';
+
 export class YvonneDataService {
   constructor(supabase) {
     this.supabase = supabase;
@@ -15,6 +19,15 @@ export class YvonneDataService {
     return this.unwrap(await query, 'list tasks');
   }
 
+  async getTask(userJid, taskId) {
+    return this.unwrap(await this.supabase
+      .from('tasks')
+      .select('id, user_jid, title, notes, status, due_at, created_at')
+      .eq('user_jid', userJid)
+      .eq('id', taskId)
+      .maybeSingle(), 'get task');
+  }
+
   async addTask(userJid, title, notes = '', dueAt = null) {
     const data = this.unwrap(await this.supabase
       .from('tasks')
@@ -30,7 +43,7 @@ export class YvonneDataService {
   }
 
   async completeTask(userJid, taskId) {
-    return this.unwrap(await this.supabase
+    const task = this.unwrap(await this.supabase
       .from('tasks')
       .update({
         status: 'completed',
@@ -42,6 +55,13 @@ export class YvonneDataService {
       .eq('status', 'open')
       .select('id, title, status')
       .single(), 'complete task');
+    this.unwrap(await this.supabase
+      .from('reminders')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('user_jid', userJid)
+      .eq('task_id', taskId)
+      .in('status', ['scheduled', 'sending']), 'cancel completed task alert');
+    return task;
   }
 
   async deleteTask(userJid, taskId) {
@@ -276,13 +296,17 @@ export class YvonneDataService {
     recurrence = 'once',
     timezone = 'Africa/Lagos'
   }) {
-    const localParts = new Intl.DateTimeFormat('en-GB', {
+    const localParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
       timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23'
-    }).formatToParts(new Date(remindAt));
-    const localTime = `${localParts.find(part => part.type === 'hour').value}:${localParts.find(part => part.type === 'minute').value}`;
+    }).formatToParts(new Date(remindAt)).map(part => [part.type, part.value]));
+    const localTime = `${localParts.hour}:${localParts.minute}`;
+    const recurrenceAnchorDate = `${localParts.year}-${localParts.month}-${localParts.day}`;
     return this.unwrap(await this.supabase
       .from('reminders')
       .insert({
@@ -293,6 +317,7 @@ export class YvonneDataService {
         timezone,
         recurrence,
         local_time: recurrence === 'once' ? null : localTime,
+        recurrence_anchor_date: recurrence === 'once' ? null : recurrenceAnchorDate,
         status: 'scheduled'
       })
       .select('id, title, kind, remind_at, timezone, recurrence, status')
@@ -302,11 +327,31 @@ export class YvonneDataService {
   async listReminders(userJid) {
     return this.unwrap(await this.supabase
       .from('reminders')
-      .select('id, title, kind, remind_at, timezone, recurrence, status, created_at')
+      .select('id, title, kind, remind_at, timezone, recurrence, status, tags, created_at')
       .eq('user_jid', userJid)
+      .is('task_id', null)
+      .is('calendar_event_id', null)
       .in('status', ['scheduled', 'sending'])
       .order('remind_at', { ascending: true })
       .limit(50), 'list reminders');
+  }
+
+  async getReminder(userJid, reminderId) {
+    return this.unwrap(await this.supabase
+      .from('reminders')
+      .select('id, user_jid, title, kind, remind_at, timezone, recurrence, status, tags')
+      .eq('user_jid', userJid)
+      .eq('id', reminderId)
+      .maybeSingle(), 'get reminder');
+  }
+
+  async getCalendarEvent(userJid, eventId) {
+    return this.unwrap(await this.supabase
+      .from('calendar_events')
+      .select('id, user_jid, title, notes, starts_at, ends_at, timezone, recurrence, tags')
+      .eq('user_jid', userJid)
+      .eq('id', eventId)
+      .maybeSingle(), 'get calendar event');
   }
 
   async cancelReminder(userJid, reminderId) {
@@ -324,7 +369,7 @@ export class YvonneDataService {
     if (allowedJids.length === 0) return [];
     return this.unwrap(await this.supabase
       .from('reminders')
-      .select('id, user_jid, title, kind, remind_at, timezone, recurrence, local_time, status, updated_at')
+      .select('id, user_jid, title, kind, remind_at, timezone, recurrence, local_time, recurrence_anchor_date, task_id, calendar_event_id, status, updated_at')
       .eq('status', 'scheduled')
       .in('user_jid', allowedJids)
       .lte('remind_at', now.toISOString())
@@ -354,6 +399,29 @@ export class YvonneDataService {
         })
         .eq('id', reminder.id)
         .eq('status', 'sending'), 'retry reminder delivery');
+      return;
+    }
+
+    if (reminder.calendar_event_id) {
+      const event = this.unwrap(await this.supabase
+        .from('calendar_events')
+        .select('starts_at, timezone, recurrence, recurrence_until, alert_enabled, alert_lead_minutes')
+        .eq('user_jid', reminder.user_jid)
+        .eq('id', reminder.calendar_event_id)
+        .maybeSingle(), 'load calendar event recurrence');
+      const nextAt = event ? getNextCalendarEventAlert(event, now) : null;
+      this.unwrap(await this.supabase
+        .from('reminders')
+        .update({
+          status: nextAt ? 'scheduled' : 'sent',
+          remind_at: nextAt?.toISOString() ?? reminder.remind_at,
+          sent_at: nextAt ? null : now.toISOString(),
+          last_sent_at: now.toISOString(),
+          last_error: null,
+          updated_at: now.toISOString()
+        })
+        .eq('id', reminder.id)
+        .eq('status', 'sending'), 'schedule the next calendar event alert');
       return;
     }
 
@@ -505,49 +573,4 @@ export class YvonneDataService {
     }
     return result.data;
   }
-}
-
-export function getNextReminderTime(reminder, now) {
-  const [hour, minute] = reminder.local_time.split(':').map(Number);
-  const dateFormatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: reminder.timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-  const dateParts = Object.fromEntries(
-    dateFormatter.formatToParts(now).map(part => [part.type, part.value])
-  );
-  const localDate = new Date(Date.UTC(
-    Number(dateParts.year),
-    Number(dateParts.month) - 1,
-    Number(dateParts.day) + (reminder.recurrence === 'weekly' ? 7 : 1),
-    hour,
-    minute
-  ));
-  const utcDateParts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'UTC',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).formatToParts(localDate).map(part => [part.type, part.value])
-  );
-  const targetLocal = `${utcDateParts.year}-${utcDateParts.month}-${utcDateParts.day}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
-  const approximateUtc = new Date(`${targetLocal}Z`);
-  const formattedInZone = new Intl.DateTimeFormat('en-CA', {
-    timeZone: reminder.timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  }).formatToParts(approximateUtc);
-  const observed = Object.fromEntries(formattedInZone.map(part => [part.type, part.value]));
-  const desiredAsUtc = Date.parse(`${targetLocal}Z`);
-  const observedAsUtc = Date.parse(
-    `${observed.year}-${observed.month}-${observed.day}T${observed.hour}:${observed.minute}:00Z`
-  );
-  return new Date(approximateUtc.getTime() + desiredAsUtc - observedAsUtc);
 }
