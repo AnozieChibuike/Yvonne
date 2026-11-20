@@ -1,9 +1,12 @@
+import { getTimeContext } from '../services/timeContext.js';
+
 export class YvonneAssistant {
-  constructor(groq, toolRegistry, model, dataService = null) {
+  constructor(groq, toolRegistry, model, dataService = null, clock = () => new Date()) {
     this.groq = groq;
     this.toolRegistry = toolRegistry;
     this.model = model;
     this.dataService = dataService;
+    this.clock = clock;
     this.conversations = new Map();
   }
 
@@ -20,18 +23,15 @@ export class YvonneAssistant {
     const pendingMemory = this.dataService
       ? await this.dataService.getPendingMemory(userJid)
       : null;
-    const localNow = new Intl.DateTimeFormat('en-NG', {
-      timeZone: 'Africa/Lagos',
-      dateStyle: 'full',
-      timeStyle: 'long'
-    }).format(new Date());
+    const timeContext = getTimeContext(this.clock());
     const messages = [
       {
         role: 'system',
         content: [
           'You are Yvonne, a warm, practical personal assistant.',
           'Be concise and conversational. Ask a brief clarifying question when needed.',
-          `The current time is ${localNow} in Africa/Lagos. Use this as the reference for relative reminder times.`,
+          `Authoritative VPS clock: ${JSON.stringify(timeContext)}. The date and time are the current Africa/Lagos local values. Use this clock for relative dates and times, not timestamps from conversation history.`,
+          'When asked for the current time or date, answer from this clock context. Do not guess or use model training knowledge.',
           'Use tools for tasks, reminders, saved preferences, and check-in settings instead of claiming an action without completing it.',
           'Supabase is the default task provider. Use Google Tasks only when the user explicitly asks for Google Tasks.',
           'One-time reminders and alarms are the default. Only create a recurring alarm if the user explicitly asks for a repeat schedule.',

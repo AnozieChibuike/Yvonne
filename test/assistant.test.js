@@ -16,6 +16,7 @@ import { getNextReminderTime } from '../src/services/yvonneData.js';
 import { config, isAllowedSender } from '../src/config/env.js';
 import { isAuthorizedSelfChat } from '../src/whatsapp/client.js';
 import { handleIncomingMessage } from '../src/whatsapp/handler.js';
+import { getTimeContext } from '../src/services/timeContext.js';
 
 test('configured WhatsApp numbers and LIDs are allowlisted exactly', () => {
   const allowedJid = config.whatsapp.allowedJids[0];
@@ -164,13 +165,29 @@ test('assistant executes tools then returns the model response', async () => {
       }
     }
   };
-  const assistant = new YvonneAssistant(groq, registry, 'test-model');
+  const fixedNow = new Date('2026-11-20T10:45:34.154Z');
+  const assistant = new YvonneAssistant(groq, registry, 'test-model', null, () => fixedNow);
 
   assert.equal(await assistant.respond('user-1', 'Find tea'), 'I found tea.');
+  assert.match(requests[0].messages[0].content, /Authoritative VPS clock/);
+  assert.match(requests[0].messages[0].content, /2026-11-20T10:45:34\.154Z/);
+  assert.match(requests[0].messages[0].content, /"localDate":"2026-11-20"/);
+  assert.match(requests[0].messages[0].content, /"localTime":"11:45:34"/);
+  assert.match(requests[0].messages[0].content, /"offset":"GMT\+1"/);
   const toolResult = requests[1].messages.find(message => message.role === 'tool');
   assert.deepEqual(JSON.parse(toolResult.content), { result: 'tea' });
   assert.equal(await assistant.respond('user-1', 'Thanks'), 'I found tea.');
   assert.equal(requests[2].messages.some(message => message.role === 'tool'), false);
+});
+
+test('time context converts the VPS instant to Africa/Lagos date and wall-clock time', () => {
+  assert.deepEqual(getTimeContext(new Date('2026-11-20T10:45:34.154Z')), {
+    instant: '2026-11-20T10:45:34.154Z',
+    timezone: 'Africa/Lagos',
+    localDate: '2026-11-20',
+    localTime: '11:45:34',
+    offset: 'GMT+1'
+  });
 });
 
 test('check-in time uses the requested timezone', () => {

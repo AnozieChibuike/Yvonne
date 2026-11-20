@@ -1,5 +1,6 @@
 import { config } from '../config/env.js';
 import { formatReminderTime } from '../services/checkinScheduler.js';
+import { getTimeContext } from '../services/timeContext.js';
 import { ToolRegistry } from './toolRegistry.js';
 
 function functionTool(name, description, properties, required = []) {
@@ -55,6 +56,11 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
     enum: ['supabase', 'google'],
     description: 'Task provider. Defaults to Supabase; choose Google only when explicitly requested.'
   };
+
+  registry.register(
+    functionTool('get_current_time', 'Get the current VPS time, date, and timezone offset. Use this for exact current-time/date questions and interpreting relative dates.', {}),
+    async () => getTimeContext()
+  );
 
   registry.register(
     functionTool('list_tasks', 'List your tasks from Supabase by default, or Google Tasks when requested.', {

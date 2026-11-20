@@ -9,6 +9,7 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 - Transcribe incoming WhatsApp voice notes and reply with text.
 - Create, list, and cancel one-time reminders and alarms; explicitly requested daily or weekly reminders repeat.
 - Send overdue reminders after a VPS restart, with the original scheduled time included.
+- Provide the assistant with the current VPS instant and Africa/Lagos local date, time, and UTC offset.
 - Ask before saving profile answers or suggested memories; only confirmed memories are included in future context.
 - Send morning, daytime, and evening check-ins using each user's saved local time and timezone.
 - Add capabilities through the assistant tool registry without putting integrations into the WhatsApp message handler.
