@@ -1,0 +1,24 @@
+[Unit]
+Description=Yvonne WhatsApp Personal Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yvonne
+Group=yvonne
+WorkingDirectory=/opt/yvonne
+EnvironmentFile=/opt/yvonne/.env
+ExecStart=/usr/bin/node /opt/yvonne/src/index.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/yvonne
+
+[Install]
+WantedBy=multi-user.target

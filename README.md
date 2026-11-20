@@ -79,3 +79,5 @@ npm test
 ```
 
 Use a process manager such as systemd or PM2 on the VPS so Yvonne restarts after host reboots. Preserve `auth_info_baileys/` and `token.json` securely between restarts; they contain credentials/session data and are ignored by Git.
+
+The repository includes a systemd unit at [`deploy/yvonne.service`](./deploy/yvonne.service). It runs as a dedicated `yvonne` service user, loads `/opt/yvonne/.env`, and restricts writes to the app directory. On first start, follow `journalctl -u yvonne -f` and scan the WhatsApp QR code; the new VPS session is stored in `/opt/yvonne/auth_info_baileys/`.
