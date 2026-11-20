@@ -11,6 +11,11 @@ export class YvonneAssistant {
   }
 
   async respond(userJid, text) {
+    const response = await this.respondWithMedia(userJid, text);
+    return response.text;
+  }
+
+  async respondWithMedia(userJid, text) {
     const history = this.conversations.get(userJid) || [];
     const savedMemories = this.dataService
       ? (await this.dataService.listMemories(userJid))
@@ -30,6 +35,7 @@ export class YvonneAssistant {
         content: [
           'You are Yvonne, a warm, practical personal assistant.',
           'Be concise and conversational. Ask a brief clarifying question when needed.',
+          'Use only WhatsApp formatting: *bold*, _italic_, ~strikethrough~, and ```monospace```. Never use HTML tags, Markdown ** or __, or tables. Prefer short paragraphs and simple bullets.',
           `Authoritative VPS clock: ${JSON.stringify(timeContext)}. The date and time are the current Africa/Lagos local values. Use this clock for relative dates and times, not timestamps from conversation history.`,
           'When asked for the current time or date, answer from this clock context. Do not guess or use model training knowledge.',
           'Use tools for tasks, reminders, saved preferences, and check-in settings instead of claiming an action without completing it.',
@@ -49,6 +55,7 @@ export class YvonneAssistant {
       ...history,
       { role: 'user', content: text }
     ];
+    let media = null;
 
     for (let round = 0; round < 5; round += 1) {
       const completion = await this.groq.chat.completions.create({
@@ -72,7 +79,7 @@ export class YvonneAssistant {
           { role: 'user', content: text },
           { role: 'assistant', content: reply }
         ].slice(-12));
-        return reply;
+        return { text: reply, media };
       }
 
       for (const toolCall of assistantMessage.tool_calls) {
@@ -84,6 +91,13 @@ export class YvonneAssistant {
         }
 
         const result = await this.toolRegistry.execute(toolCall.function.name, input, { userJid });
+        if (toolCall.function.name === 'list_tasks' && Array.isArray(result)) {
+          media = {
+            type: 'task-list',
+            title: input.provider === 'google' ? 'Google tasks' : 'Your tasks',
+            tasks: result
+          };
+        }
         messages.push({
           role: 'tool',
           tool_call_id: toolCall.id,

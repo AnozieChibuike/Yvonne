@@ -6,8 +6,10 @@ import pino from 'pino';
 import { isAllowedSender, normalizePhoneNumber } from '../config/env.js';
 import { transcribeVoiceNote } from '../services/groq.js';
 import { formatReminderTime } from '../services/checkinScheduler.js';
+import { MAX_TASKS_PER_CARD, renderTaskListImage } from '../services/taskCards.js';
 
 const MAX_VOICE_NOTE_BYTES = 25 * 1024 * 1024;
+const TASKS_PER_PAGE = MAX_TASKS_PER_CARD;
 const mediaLogger = pino({ level: 'silent' });
 const userSessions = new Map();
 
@@ -51,7 +53,8 @@ async function sendHelpMessage(sock, jid) {
   await sock.sendMessage(jid, {
     text: `Hi, I’m *Yvonne*. You can chat naturally, send a voice note, or use these commands:
 
-• \`!tasks\` — list your Supabase tasks
+• \`!tasks [page]\` — view your tasks as a card
+• \`!task <number or id>\` — view one task as a card
 • \`!add <title> | <notes>\` — create a task
 • \`!done <number or id>\` — complete a task
 • \`!delete <number or id>\` — delete a task
@@ -65,10 +68,11 @@ Supabase is the default task store; Google Tasks stays separate.`
   });
 }
 
-async function listTasks(sock, jid, providerName, provider, session) {
+async function listTasks(sock, jid, providerName, provider, session, page = 1) {
   const tasks = await provider.list();
   const taskMap = session.maps[providerName];
   taskMap.clear();
+  tasks.forEach((task, index) => taskMap.set(index + 1, task.id));
 
   if (tasks.length === 0) {
     await sock.sendMessage(jid, {
@@ -77,14 +81,20 @@ async function listTasks(sock, jid, providerName, provider, session) {
     return;
   }
 
-  const rows = tasks.map((task, index) => {
-    const number = index + 1;
-    taskMap.set(number, task.id);
-    const due = task.due_at || task.due;
-    return `*${number}.* ${task.title}${due ? ` _(Due: ${due})_` : ''}${task.notes ? `\n   ${task.notes}` : ''}`;
+  const pageCount = Math.ceil(tasks.length / TASKS_PER_PAGE);
+  const selectedPage = Math.min(page, pageCount);
+  const pageTasks = tasks.slice((selectedPage - 1) * TASKS_PER_PAGE, selectedPage * TASKS_PER_PAGE);
+  const image = await renderTaskListImage(pageTasks, {
+    title: providerName === 'google' ? session.activeGoogleListName : 'Your tasks',
+    page: selectedPage,
+    totalTasks: tasks.length
   });
+  const pageHint = pageCount > 1
+    ? ` Send \`!tasks ${selectedPage < pageCount ? selectedPage + 1 : 1}\` for ${selectedPage < pageCount ? 'the next' : 'the first'} page.`
+    : '';
   await sock.sendMessage(jid, {
-    text: `📋 *${providerName === 'google' ? `Google Tasks — ${session.activeGoogleListName}` : 'Yvonne Tasks'}*\n\n${rows.join('\n')}`
+    image,
+    caption: `📋 ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}.${pageHint}\nReply with \`!task <number>\` for details.`
   });
 }
 
@@ -92,7 +102,33 @@ async function handleTaskCommand(sock, jid, providerName, command, args, dataSer
   const provider = getProvider(providerName, dataService, googleTasks, session);
 
   if (['!tasks', '!list', '!ls'].includes(command)) {
-    await listTasks(sock, jid, providerName, provider, session);
+    const requestedPage = /^\d+$/.test(args) ? Number(args) : 1;
+    await listTasks(sock, jid, providerName, provider, session, requestedPage);
+    return true;
+  }
+
+  if (command === '!task') {
+    if (!args) {
+      await sock.sendMessage(jid, { text: 'Usage: `!task <number or id>`. Use `!tasks` first to see task numbers.' });
+      return true;
+    }
+    const taskNumber = /^\d+$/.test(args) ? Number(args) : null;
+    const mappedTaskId = taskNumber ? session.maps[providerName].get(taskNumber) : null;
+    const tasks = await provider.list(Boolean(mappedTaskId || !taskNumber));
+    const task = mappedTaskId
+      ? tasks.find(candidate => candidate.id === mappedTaskId)
+      : taskNumber
+        ? tasks[taskNumber - 1]
+        : tasks.find(candidate => candidate.id === args);
+    if (!task) {
+      await sock.sendMessage(jid, { text: 'I could not find that task. Send `!tasks` to refresh your list.' });
+      return true;
+    }
+    const image = await renderTaskListImage([task], { title: 'Task details', totalTasks: 1 });
+    await sock.sendMessage(jid, {
+      image,
+      caption: `Task: ${task.title}`
+    });
     return true;
   }
 
@@ -339,8 +375,25 @@ export async function handleIncomingMessage(sock, msg, dependencies) {
       }
     }
 
-    const reply = await dependencies.assistant.respond(userJid, text);
-    await sock.sendMessage(senderJid, { text: reply });
+    const response = dependencies.assistant.respondWithMedia
+      ? await dependencies.assistant.respondWithMedia(userJid, text)
+      : { text: await dependencies.assistant.respond(userJid, text) };
+    if (response.media?.type === 'task-list' && response.media.tasks.length > 0) {
+      const image = await renderTaskListImage(response.media.tasks, {
+        title: response.media.title || 'Your tasks',
+        totalTasks: response.media.tasks.length
+      });
+      const taskCount = response.media.tasks.length;
+      const nextPageHint = taskCount > MAX_TASKS_PER_CARD
+        ? ` Showing the first ${MAX_TASKS_PER_CARD}; send \`!tasks 2\` for more.`
+        : '';
+      await sock.sendMessage(senderJid, {
+        image,
+        caption: `📋 ${response.media.title || 'Your tasks'} · ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}.${nextPageHint}`
+      });
+    } else {
+      await sock.sendMessage(senderJid, { text: response.text });
+    }
 
     if (profile.onboarding_status === 'pending') {
       await dependencies.dataService.restartOnboarding(userJid);

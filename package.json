@@ -4,6 +4,9 @@
   "description": "Yvonne personal assistant for WhatsApp with Groq, Supabase, voice transcription, and Google Tasks support",
   "main": "src/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
@@ -27,6 +30,7 @@
     "groq-sdk": "^1.6.0",
     "node-cron": "^4.6.0",
     "pino": "^9.6.0",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.35.5"
   }
 }

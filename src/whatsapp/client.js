@@ -17,6 +17,62 @@ function normalizeJid(jid) {
   return `${identifier.split(':')[0].replace(/\D/g, '')}@${server.toLowerCase()}`;
 }
 
+export function normalizeWhatsAppText(value) {
+  const lines = String(value).split('\n');
+  const formattedLines = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line.startsWith('|') && line.endsWith('|')) {
+      const cells = line.slice(1, -1).split('|').map(cell => cell.trim());
+      const isSeparator = cells.every(cell => /^:?-{3,}:?$/.test(cell));
+      if (isSeparator) continue;
+
+      const next = lines[index + 1]?.trim();
+      const hasHeaderSeparator = next?.startsWith('|') &&
+        next.endsWith('|') &&
+        next.slice(1, -1).split('|').every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+      if (hasHeaderSeparator) continue;
+
+      formattedLines.push(`• ${cells.filter(Boolean).join(' — ')}`);
+      continue;
+    }
+    formattedLines.push(line);
+  }
+
+  return formattedLines.join('\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(?:b|strong)\s*>/gi, '*')
+    .replace(/<\/?(?:i|em)\s*>/gi, '_')
+    .replace(/<\/?(?:s|del|strike)\s*>/gi, '~')
+    .replace(/<\/?(?:code|tt)\s*>/gi, '`')
+    .replace(/<\/?(?:p|div|tr|h[1-6])\b[^>]*>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '*$1*')
+    .replace(/__([\s\S]+?)__/g, '_$1_')
+    .replace(/~~([\s\S]+?)~~/g, '~$1~')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1 ($2)')
+    .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
+    .replace(/\*{2,}/g, '*')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeOutgoingContent(content) {
+  if (!content || typeof content !== 'object') return content;
+  const normalized = { ...content };
+  if (typeof normalized.text === 'string') normalized.text = normalizeWhatsAppText(normalized.text);
+  if (typeof normalized.caption === 'string') normalized.caption = normalizeWhatsAppText(normalized.caption);
+  return normalized;
+}
+
 export function isAuthorizedSelfChat(sock, msg) {
   const remoteJid = msg.key.remoteJid;
   if (!remoteJid || remoteJid.includes('@g.us') || !isAllowedSender(remoteJid)) return false;
@@ -46,8 +102,8 @@ export async function startWhatsAppClient(onMessageCallback, onSocketCreated = (
   });
   const outgoingMessageIds = new Map();
   const sendMessage = sock.sendMessage.bind(sock);
-  sock.sendMessage = async (...args) => {
-    const sentMessage = await sendMessage(...args);
+  sock.sendMessage = async (jid, content, ...args) => {
+    const sentMessage = await sendMessage(jid, normalizeOutgoingContent(content), ...args);
     if (sentMessage?.key?.id) {
       const now = Date.now();
       for (const [id, expiresAt] of outgoingMessageIds) {

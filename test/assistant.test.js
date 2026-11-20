@@ -15,8 +15,11 @@ import {
 import { getNextReminderTime } from '../src/services/yvonneData.js';
 import { config, isAllowedSender } from '../src/config/env.js';
 import { isAuthorizedSelfChat } from '../src/whatsapp/client.js';
+import { normalizeWhatsAppText } from '../src/whatsapp/client.js';
 import { handleIncomingMessage } from '../src/whatsapp/handler.js';
 import { getTimeContext } from '../src/services/timeContext.js';
+import { renderTaskListImage } from '../src/services/taskCards.js';
+import sharp from 'sharp';
 
 test('configured WhatsApp numbers and LIDs are allowlisted exactly', () => {
   const allowedJid = config.whatsapp.allowedJids[0];
@@ -63,6 +66,92 @@ test('only an authorized direct self-chat is accepted as a from-me message', () 
 test('sender authorization rejects unmatched JIDs', () => {
   assert.equal(isAllowedSender('123@s.whatsapp.net'), false);
   assert.equal(isAllowedSender('2340000000000@s.whatsapp.net'), false);
+});
+
+test('outgoing replies normalize Telegram-style formatting for WhatsApp', () => {
+  assert.equal(
+    normalizeWhatsAppText('<b>Tasks</b>\n**Call Mum** and __send the email__\n| Task | Due |\n| --- | --- |\n| Call Mum | Tomorrow |'),
+    '*Tasks*\n*Call Mum* and _send the email_\n• Call Mum — Tomorrow'
+  );
+});
+
+test('task card renderer creates a readable PNG image', async () => {
+  const image = await renderTaskListImage([
+    { title: 'Call Mum', notes: 'Ask about Sunday lunch', due_at: '2026-11-21T09:00:00.000Z' },
+    { title: 'Review project plan', status: 'completed' }
+  ], { totalTasks: 2 });
+  const metadata = await sharp(image).metadata();
+
+  assert.equal(metadata.format, 'png');
+  assert.equal(metadata.width, 1080);
+  assert.ok(metadata.height > 300);
+});
+
+test('task commands send image cards for task lists and task details', async () => {
+  const allowedJid = config.whatsapp.allowedJids[0];
+  const sent = [];
+  const tasks = [
+    { id: 'task-1', title: 'Call Mum', notes: 'Ask about Sunday lunch', status: 'open' },
+    { id: 'task-2', title: 'Review project plan', status: 'completed' }
+  ];
+  const dependencies = {
+    dataService: { listTasks: async (_userJid, includeCompleted) => includeCompleted ? tasks : tasks.slice(0, 1) },
+    googleTasks: null
+  };
+  const sock = { sendMessage: async (jid, message) => sent.push({ jid, message }) };
+  const message = text => ({
+    key: { remoteJid: allowedJid, fromMe: false },
+    message: { conversation: text }
+  });
+
+  await handleIncomingMessage(sock, message('!tasks'), dependencies);
+  await handleIncomingMessage(sock, message('!task 1'), dependencies);
+  await handleIncomingMessage(sock, message('!task task-2'), {
+    ...dependencies,
+    assistant: { respond: async () => assert.fail('task command should not call the assistant') }
+  });
+
+  assert.equal(sent.length, 3);
+  assert.ok(Buffer.isBuffer(sent[0].message.image));
+  assert.match(sent[0].message.caption, /task/);
+  assert.ok(Buffer.isBuffer(sent[1].message.image));
+  assert.match(sent[1].message.caption, /Call Mum/);
+  assert.ok(Buffer.isBuffer(sent[2].message.image));
+  assert.match(sent[2].message.caption, /Review project plan/);
+});
+
+test('natural-language task list responses are sent as task-card images', async () => {
+  const allowedJid = '9876543210@s.whatsapp.net';
+  const sent = [];
+  config.whatsapp.allowedJids.push(allowedJid);
+  try {
+    const sock = { sendMessage: async (jid, message) => sent.push({ jid, message }) };
+    await handleIncomingMessage(sock, {
+      key: { remoteJid: allowedJid, fromMe: false },
+      message: { conversation: 'Show my tasks' }
+    }, {
+      dataService: {
+        getUserProfile: async () => ({ onboarding_status: 'completed' }),
+        getPendingMemory: async () => null
+      },
+      assistant: {
+        respondWithMedia: async () => ({
+          text: 'Here are your tasks.',
+          media: {
+            type: 'task-list',
+            title: 'Your tasks',
+            tasks: [{ id: 'task-1', title: 'Call Mum', status: 'open' }]
+          }
+        })
+      }
+    });
+  } finally {
+    config.whatsapp.allowedJids.pop();
+  }
+
+  assert.equal(sent.length, 1);
+  assert.ok(Buffer.isBuffer(sent[0].message.image));
+  assert.match(sent[0].message.caption, /Your tasks · 1 task/);
 });
 
 test('tool registry runs registered tools and rejects duplicate names', async () => {
@@ -178,6 +267,51 @@ test('assistant executes tools then returns the model response', async () => {
   assert.deepEqual(JSON.parse(toolResult.content), { result: 'tea' });
   assert.equal(await assistant.respond('user-1', 'Thanks'), 'I found tea.');
   assert.equal(requests[2].messages.some(message => message.role === 'tool'), false);
+});
+
+test('assistant marks natural-language task lists for image-card delivery', async () => {
+  const registry = new ToolRegistry();
+  const tasks = [{ id: 'task-1', title: 'Call Mum', status: 'open' }];
+  registry.register({
+    type: 'function',
+    function: { name: 'list_tasks', parameters: { type: 'object', properties: {} } }
+  }, async () => tasks);
+
+  let requestCount = 0;
+  const groq = {
+    chat: {
+      completions: {
+        create: async () => {
+          requestCount += 1;
+          if (requestCount === 1) {
+            return {
+              choices: [{
+                message: {
+                  role: 'assistant',
+                  tool_calls: [{
+                    id: 'list-task-call',
+                    type: 'function',
+                    function: { name: 'list_tasks', arguments: '{}' }
+                  }]
+                }
+              }]
+            };
+          }
+          return { choices: [{ message: { role: 'assistant', content: 'Here are your tasks.' } }] };
+        }
+      }
+    }
+  };
+  const assistant = new YvonneAssistant(groq, registry, 'test-model');
+
+  const response = await assistant.respondWithMedia('user-1', 'Show my tasks');
+
+  assert.equal(response.text, 'Here are your tasks.');
+  assert.deepEqual(response.media, {
+    type: 'task-list',
+    title: 'Your tasks',
+    tasks
+  });
 });
 
 test('time context converts the VPS instant to Africa/Lagos date and wall-clock time', () => {

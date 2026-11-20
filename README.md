@@ -7,6 +7,8 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 - Chat naturally over WhatsApp, restricted to the numbers and LIDs in `ALLOWED_NUMBERS`.
 - Create, list, complete, and delete Supabase tasks; explicitly request Google Tasks to use that separate provider.
 - Transcribe incoming WhatsApp voice notes and reply with text.
+- Show task lists and individual task details as generated image cards on WhatsApp.
+- Normalize outgoing text to WhatsApp formatting (for example, `*bold*`), removing Telegram-style tags and tables.
 - Create, list, and cancel one-time reminders and alarms; explicitly requested daily or weekly reminders repeat.
 - Send overdue reminders after a VPS restart, with the original scheduled time included.
 - Provide the assistant with the current VPS instant and Africa/Lagos local date, time, and UTC offset.
@@ -16,7 +18,7 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 
 ## Requirements
 
-- Node.js 20 or newer.
+- Node.js 20.9 or newer.
 - A Groq API key.
 - A Supabase project.
 - A WhatsApp account to link as a device.
@@ -61,6 +63,8 @@ Follow the terminal prompts to create the local `token.json`. Google Tasks is no
 | --- | --- |
 | `!help` | Show help |
 | `!tasks` | List open Supabase tasks |
+| `!tasks <page>` | View a page of tasks as an image card |
+| `!task <number or id>` | View one task as an image card |
 | `!add <title> \| <notes>` | Add a Supabase task |
 | `!done <number or id>` | Complete a listed Supabase task |
 | `!delete <number or id>` | Delete a listed Supabase task |
