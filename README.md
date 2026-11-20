@@ -76,6 +76,8 @@ Follow the terminal prompts to create the local `token.json`. Google Tasks is no
 
 Reminders and alarms use `Africa/Lagos` local time by default. Ask Yvonne naturally, for example: “Remind me tomorrow at 9 am to call Mum,” “Set an alarm for 6:30 tomorrow,” or “List my reminders.” Ambiguous dates or times should be clarified before saving. One-time delivery is the default; specify a repeat schedule for recurring reminders. `!reminders` lists scheduled alerts. If Yvonne is offline at the scheduled time, it sends the overdue alert after reconnecting and includes the original time.
 
+Tasks and reminders are separate: a task is a to-do that can have no due date, while a reminder or alarm is a scheduled WhatsApp notification. A task due date does not send an alert. Ask Yvonne to create both when you want a task plus a notification. Task image cards are sent only when you explicitly ask to view your tasks.
+
 Yvonne starts a short onboarding after your first interaction; each answer is staged and saved only after you confirm it. Use `!skip` to stop or `!onboard` to start again. You can also ask naturally, for example: “Remember that I prefer short meetings,” “Add a task to renew my passport,” or “Move my evening check-in to 9:30 pm.” Supabase is the default task provider; Google Tasks stays separate.
 
 ## Adding a tool

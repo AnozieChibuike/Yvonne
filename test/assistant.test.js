@@ -277,13 +277,11 @@ test('assistant marks natural-language task lists for image-card delivery', asyn
     function: { name: 'list_tasks', parameters: { type: 'object', properties: {} } }
   }, async () => tasks);
 
-  let requestCount = 0;
   const groq = {
     chat: {
       completions: {
-        create: async () => {
-          requestCount += 1;
-          if (requestCount === 1) {
+        create: async request => {
+          if (!request.messages.some(message => message.role === 'tool')) {
             return {
               choices: [{
                 message: {
@@ -312,6 +310,132 @@ test('assistant marks natural-language task lists for image-card delivery', asyn
     title: 'Your tasks',
     tasks
   });
+
+  const countResponse = await assistant.respondWithMedia('user-1', 'How many tasks do I have?');
+  assert.equal(countResponse.media, null);
+  const dueResponse = await assistant.respondWithMedia('user-1', 'What task is due today?');
+  assert.equal(dueResponse.media, null);
+});
+
+test('reminder creation confirmation reflects the saved record and never sends an unrequested task image', async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    type: 'function',
+    function: { name: 'create_reminder', parameters: { type: 'object', properties: {} } }
+  }, async () => ({
+    id: 'reminder-1',
+    title: 'Call Mum',
+    kind: 'reminder',
+    recurrence: 'once',
+    remind_at_local: '21 Nov 2026, 09:00'
+  }));
+  registry.register({
+    type: 'function',
+    function: { name: 'list_tasks', parameters: { type: 'object', properties: {} } }
+  }, async () => [{ id: 'task-1', title: 'Only task', status: 'open' }]);
+
+  const groq = {
+    chat: {
+      completions: {
+        create: async request => request.messages.some(message => message.role === 'tool')
+          ? {
+            choices: [{
+              message: {
+                role: 'assistant',
+                content: 'Done, I set the reminder. You have one task.'
+              }
+            }]
+          }
+          : {
+            choices: [{
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    id: 'create-reminder-call',
+                    type: 'function',
+                    function: { name: 'create_reminder', arguments: '{}' }
+                  },
+                  {
+                    id: 'list-tasks-call',
+                    type: 'function',
+                    function: { name: 'list_tasks', arguments: '{}' }
+                  }
+                ]
+              }
+            }]
+          }
+      }
+    }
+  };
+  const assistant = new YvonneAssistant(groq, registry, 'test-model');
+
+  const response = await assistant.respondWithMedia('user-1', 'Remind me tomorrow at 9 to call Mum');
+
+  assert.match(response.text, /Saved reminder “Call Mum” for 21 Nov 2026, 09:00 Africa\/Lagos/);
+  assert.match(response.text, /separate from your tasks/);
+  assert.match(response.text, /!reminders/);
+  assert.equal(response.media, null);
+});
+
+test('assistant does not claim a reminder was saved without a successful reminder tool call', async () => {
+  const registry = new ToolRegistry();
+  const groq = {
+    chat: {
+      completions: {
+        create: async () => ({
+          choices: [{ message: { role: 'assistant', content: 'Done, I scheduled your reminder.' } }]
+        })
+      }
+    }
+  };
+  const assistant = new YvonneAssistant(groq, registry, 'test-model');
+
+  const reply = await assistant.respond('user-1', 'Remind me to call Mum tomorrow');
+
+  assert.match(reply, /I have not saved a reminder yet/);
+});
+
+test('reminder-only requests cannot accidentally create task records', async () => {
+  let taskWrites = 0;
+  const registry = new ToolRegistry();
+  registry.register({
+    type: 'function',
+    function: { name: 'add_task', parameters: { type: 'object', properties: {} } }
+  }, async () => {
+    taskWrites += 1;
+    return { id: 'task-1', title: 'Buy milk' };
+  });
+  const groq = {
+    chat: {
+      completions: {
+        create: async request => request.messages.some(message => message.role === 'tool')
+          ? {
+            choices: [{
+              message: { role: 'assistant', content: 'Done, I added it and scheduled your reminder.' }
+            }]
+          }
+          : {
+            choices: [{
+              message: {
+                role: 'assistant',
+                tool_calls: [{
+                  id: 'wrong-task-call',
+                  type: 'function',
+                  function: { name: 'add_task', arguments: '{}' }
+                }]
+              }
+            }]
+          }
+      }
+    }
+  };
+  const assistant = new YvonneAssistant(groq, registry, 'test-model');
+
+  const reply = await assistant.respond('user-1', 'Remind me tomorrow to add a task to buy milk');
+
+  assert.equal(taskWrites, 0);
+  assert.match(reply, /I have not saved a reminder yet/);
 });
 
 test('time context converts the VPS instant to Africa/Lagos date and wall-clock time', () => {

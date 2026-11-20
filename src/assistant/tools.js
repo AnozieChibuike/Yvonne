@@ -63,7 +63,7 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
-    functionTool('list_tasks', 'List your tasks from Supabase by default, or Google Tasks when requested.', {
+    functionTool('list_tasks', 'Read your to-do tasks only. Tasks may have no due date. Do not use this to create or list reminders/alarms. Supabase is default; use Google only when asked.', {
       provider: providerProperty,
       include_completed: { type: 'boolean', description: 'Include completed tasks.' }
     }),
@@ -77,7 +77,21 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
-    functionTool('add_task', 'Create a task. Supabase is the default provider. Use due_at as an ISO date/time if supplied.', {
+    functionTool('get_task', 'Retrieve one exact task by ID for details. First use list_tasks if you need to find the ID. This is a task, not a reminder.', {
+      task_id: { type: 'string', description: 'Exact task ID returned by list_tasks.' },
+      provider: providerProperty
+    }, ['task_id']),
+    async ({ task_id, provider = 'supabase' }, { userJid }) => {
+      if (typeof task_id !== 'string' || !task_id.trim()) throw new Error('A task ID is required.');
+      const taskProvider = getTaskProvider(provider, dataService, googleTasks);
+      const task = (await taskProvider.list(userJid, true)).find(item => item.id === task_id);
+      if (!task) throw new Error('That task was not found.');
+      return task;
+    }
+  );
+
+  registry.register(
+    functionTool('add_task', 'Create a to-do task, which may have no due date. A task due date does not send a WhatsApp alert. For a scheduled notification, use create_reminder instead.', {
       title: { type: 'string', description: 'Short task title.' },
       notes: { type: 'string', description: 'Optional task details.' },
       due_at: { type: 'string', description: 'Optional ISO date or date-time.' },
@@ -176,7 +190,7 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
-    functionTool('create_reminder', 'Schedule a WhatsApp reminder. Use Africa/Lagos local time. If the date or exact time is ambiguous, ask before calling this. Ordinary reminders default to one-time; daily/weekly recurrence must be explicitly requested. Return the reminder ID and scheduled local time.', {
+    functionTool('create_reminder', 'Create a scheduled WhatsApp notification, separate from the task list. Use when the user asks to be reminded or asks for an alarm. Use Africa/Lagos local time. If the date or exact time is ambiguous, ask before calling this. Ordinary reminders default to one-time; daily/weekly recurrence must be explicitly requested.', {
       title: { type: 'string', description: 'What to remind the user about.' },
       remind_at: { type: 'string', description: 'ISO 8601 date-time including an explicit timezone offset, interpreted as Africa/Lagos local time.' },
       kind: { type: 'string', enum: ['reminder', 'alarm'], description: 'Use alarm only when the user calls it an alarm.' },
@@ -207,7 +221,7 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
-    functionTool('list_reminders', 'List scheduled one-time reminders and alarms, including their ID and Africa/Lagos time.', {}),
+    functionTool('list_reminders', 'List scheduled reminders and alarms only, separate from tasks, including each scheduled Africa/Lagos time.', {}),
     async (_input, { userJid }) => (await dataService.listReminders(userJid)).map(reminder => ({
       ...reminder,
       remind_at_local: formatReminderTime(reminder.remind_at, reminder.timezone)

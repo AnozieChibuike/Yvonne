@@ -1,5 +1,50 @@
 import { getTimeContext } from '../services/timeContext.js';
 
+function requestsTaskVisual(text) {
+  const mentionsTasks = /\b(?:tasks?|to-?dos?)\b/i.test(text);
+  if (!mentionsTasks) return false;
+  if (/\b(?:image|picture|card)\b/i.test(text)) return true;
+  if (/\b(?:show|display|list|view|see|send)\b/i.test(text)) return true;
+  const asksForTaskFact = /\b(?:how many|count|due|overdue|status|priority|when|which|next)\b/i.test(text);
+  if (asksForTaskFact) return false;
+  return /\b(?:give me|tell me)\b/i.test(text) ||
+    /\bwhat\s+(?:are|is)\s+(?:my|the|all|open)?\s*tasks?\b/i.test(text) ||
+    /\bwhat\s+tasks?\s+(?:do|did)\s+i\s+have\b/i.test(text);
+}
+
+function requestsReminder(text) {
+  return /\bremind me\b|\b(?:set|create|schedule|make)\b.{0,24}\b(?:alarm|reminder)\b|\b(?:alarm|reminder)\s+(?:at|for|tomorrow|today)\b/i.test(text);
+}
+
+function explicitlyRequestsTask(text) {
+  const taskRequest = /\b(?:add|create|make|save)\b.{0,30}\btask\b/i.exec(text);
+  const reminderRequest = /\bremind me\b|\b(?:set|create|schedule|make)\b.{0,24}\b(?:alarm|reminder)\b/i.exec(text);
+  return Boolean(taskRequest && (!reminderRequest || taskRequest.index < reminderRequest.index));
+}
+
+function formatReminderConfirmation(reminder) {
+  const kind = reminder.kind === 'alarm' ? 'Alarm' : 'Reminder';
+  const repeat = reminder.recurrence === 'once' ? 'one-time' : reminder.recurrence;
+  return `✅ Saved ${kind.toLowerCase()} “${reminder.title}” for ${reminder.remind_at_local} Africa/Lagos (${repeat}). It’s separate from your tasks. Send !reminders to verify it.`;
+}
+
+function formatReminderList(reminders) {
+  if (!reminders.length) return 'You have no scheduled reminders or alarms.';
+  const lines = reminders.map(reminder => {
+    const kind = reminder.kind === 'alarm' ? 'Alarm' : 'Reminder';
+    const repeat = reminder.recurrence === 'once' ? '' : ` · ${reminder.recurrence}`;
+    return `• ${kind}: ${reminder.title} — ${reminder.remind_at_local}${repeat}`;
+  });
+  return `Your scheduled reminders and alarms (separate from tasks):\n${lines.join('\n')}`;
+}
+
+function formatConfirmedAction(toolName, result) {
+  if (toolName === 'create_reminder') return formatReminderConfirmation(result);
+  if (toolName === 'list_reminders') return formatReminderList(result);
+  if (toolName === 'cancel_reminder') return `Cancelled ${result.title ? `“${result.title}”` : 'that reminder'}.`;
+  return null;
+}
+
 export class YvonneAssistant {
   constructor(groq, toolRegistry, model, dataService = null, clock = () => new Date()) {
     this.groq = groq;
@@ -36,6 +81,9 @@ export class YvonneAssistant {
           'You are Yvonne, a warm, practical personal assistant.',
           'Be concise and conversational. Ask a brief clarifying question when needed.',
           'Use only WhatsApp formatting: *bold*, _italic_, ~strikethrough~, and ```monospace```. Never use HTML tags, Markdown ** or __, or tables. Prefer short paragraphs and simple bullets.',
+          'Tasks are to-dos and may have no due date. A task due date does not schedule a WhatsApp message. Reminders and alarms are separate scheduled notifications; use reminder tools for them and never count or report them as tasks. Create both only when the user explicitly asks for both.',
+          'Send task image cards only when the user explicitly asks to see, show, list, or display their tasks. For task counts, due-date questions, reminders, or other requests, answer in text only.',
+          'When the user asks to inspect one task, use list_tasks to find its ID, then get_task to retrieve it.',
           `Authoritative VPS clock: ${JSON.stringify(timeContext)}. The date and time are the current Africa/Lagos local values. Use this clock for relative dates and times, not timestamps from conversation history.`,
           'When asked for the current time or date, answer from this clock context. Do not guess or use model training knowledge.',
           'Use tools for tasks, reminders, saved preferences, and check-in settings instead of claiming an action without completing it.',
@@ -55,7 +103,11 @@ export class YvonneAssistant {
       ...history,
       { role: 'user', content: text }
     ];
+    const wantsTaskCard = requestsTaskVisual(text);
+    const reminderOnlyRequest = requestsReminder(text) && !explicitlyRequestsTask(text);
     let media = null;
+    let confirmedActionText = null;
+    let createdReminder = false;
 
     for (let round = 0; round < 5; round += 1) {
       const completion = await this.groq.chat.completions.create({
@@ -74,12 +126,20 @@ export class YvonneAssistant {
       if (!assistantMessage.tool_calls?.length) {
         const reply = assistantMessage.content?.trim();
         if (!reply) throw new Error('Groq returned an empty text response.');
+        const isClarifyingOrDeclining = reply.includes('?') ||
+          /\b(?:what|which|when|please|provide|tell me|need (?:an?|the) exact|cannot|can't|unable|not saved|haven't saved)\b/i.test(reply);
+        const reminderNotCreated = requestsReminder(text) && !createdReminder;
+        const finalReply = reminderNotCreated
+          ? isClarifyingOrDeclining
+            ? reply
+            : 'I have not saved a reminder yet. Please tell me the exact date and time, and I’ll confirm it after it is saved.'
+          : confirmedActionText || reply;
         this.conversations.set(userJid, [
           ...history,
           { role: 'user', content: text },
-          { role: 'assistant', content: reply }
+          { role: 'assistant', content: finalReply }
         ].slice(-12));
-        return { text: reply, media };
+        return { text: finalReply, media };
       }
 
       for (const toolCall of assistantMessage.tool_calls) {
@@ -90,13 +150,24 @@ export class YvonneAssistant {
           throw new Error(`Groq returned invalid arguments for ${toolCall.function.name}.`);
         }
 
-        const result = await this.toolRegistry.execute(toolCall.function.name, input, { userJid });
-        if (toolCall.function.name === 'list_tasks' && Array.isArray(result)) {
+        const blockedTaskCreation = reminderOnlyRequest && toolCall.function.name === 'add_task';
+        const result = blockedTaskCreation
+          ? {
+            error: 'Do not add this as a task. The user asked for a reminder; use create_reminder or ask for a precise date and time.'
+          }
+          : await this.toolRegistry.execute(toolCall.function.name, input, { userJid });
+        const actionText = formatConfirmedAction(toolCall.function.name, result);
+        if (actionText) confirmedActionText = actionText;
+        if (toolCall.function.name === 'create_reminder') createdReminder = true;
+        if (wantsTaskCard && toolCall.function.name === 'list_tasks' && Array.isArray(result)) {
           media = {
             type: 'task-list',
             title: input.provider === 'google' ? 'Google tasks' : 'Your tasks',
             tasks: result
           };
+        }
+        if (wantsTaskCard && toolCall.function.name === 'get_task' && result && !Array.isArray(result)) {
+          media = { type: 'task-detail', title: 'Task details', tasks: [result] };
         }
         messages.push({
           role: 'tool',

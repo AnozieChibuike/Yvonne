@@ -378,7 +378,7 @@ export async function handleIncomingMessage(sock, msg, dependencies) {
     const response = dependencies.assistant.respondWithMedia
       ? await dependencies.assistant.respondWithMedia(userJid, text)
       : { text: await dependencies.assistant.respond(userJid, text) };
-    if (response.media?.type === 'task-list' && response.media.tasks.length > 0) {
+    if (['task-list', 'task-detail'].includes(response.media?.type) && response.media.tasks.length > 0) {
       const image = await renderTaskListImage(response.media.tasks, {
         title: response.media.title || 'Your tasks',
         totalTasks: response.media.tasks.length
