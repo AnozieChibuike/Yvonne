@@ -40,6 +40,8 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 
 The Supabase service-role key bypasses row-level security, so it must remain on the server and must never be embedded in a client app. Yvonne rejects startup unless at least one sender is configured in `ALLOWED_NUMBERS`; all other senders are rejected.
 
+The default chat model is `openai/gpt-oss-120b`. Set `GROQ_MODEL` to another model ID returned by your Groq account's `GET /openai/v1/models` endpoint if you prefer a different model.
+
 ## Google Tasks (optional)
 
 To keep Google Tasks available as a separate provider, configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then run:
