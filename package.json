@@ -1,0 +1,32 @@
+{
+  "name": "yvonne-assistant",
+  "version": "1.0.0",
+  "description": "Yvonne personal assistant for WhatsApp with Groq, Supabase, voice transcription, and Google Tasks support",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "auth": "node src/auth-cli.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "whatsapp",
+    "google-tasks",
+    "baileys",
+    "bot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@supabase/supabase-js": "^2.119.2",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "dotenv": "^16.4.7",
+    "googleapis": "^144.0.0",
+    "groq-sdk": "^1.6.0",
+    "node-cron": "^4.6.0",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
