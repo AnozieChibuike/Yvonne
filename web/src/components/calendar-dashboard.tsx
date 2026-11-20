@@ -10,6 +10,7 @@ import {
   CalendarPlus,
   Check,
   CheckCheck,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Circle,
@@ -57,7 +58,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ItemDialog, type EditableRecord } from "@/components/item-dialog";
 
-type View = "all" | "tasks" | "reminders" | "events";
+export type DashboardView = "all" | "tasks" | "reminders" | "events";
+type View = DashboardView;
 type DashboardItem =
   | { type: "task"; item: Task }
   | { type: "reminder"; item: Reminder }
@@ -145,9 +147,11 @@ function toEditableRecord(type: string, value: unknown): EditableRecord | null {
 
 export function CalendarDashboard({
   initialNow,
+  initialView = "all",
   focusItem,
 }: {
   initialNow: string;
+  initialView?: DashboardView;
   focusItem?: FocusItem;
 }) {
   const router = useRouter();
@@ -156,7 +160,8 @@ export function CalendarDashboard({
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [visibleMonth, setVisibleMonth] = useState(monthStart(initialDate));
-  const [view, setView] = useState<View>("all");
+  const [view, setView] = useState<View>(initialView);
+  const [mobileCalendarExpanded, setMobileCalendarExpanded] = useState(false);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [createType, setCreateType] = useState<ItemType>("event");
@@ -574,10 +579,12 @@ export function CalendarDashboard({
                   <ChevronLeft aria-hidden="true" />
                 </Button>
                 <Button
+                  className="calendar-today-button"
                   onClick={() => {
                     const today = dateKeyToCalendarDate(toLagosDate(new Date()));
                     setSelectedDate(today);
                     setVisibleMonth(monthStart(today));
+                    setMobileCalendarExpanded(false);
                   }}
                   size="sm"
                   variant="outline"
@@ -592,9 +599,24 @@ export function CalendarDashboard({
                 >
                   <ChevronRight aria-hidden="true" />
                 </Button>
+                <Button
+                  aria-controls="calendar-month-grid"
+                  aria-expanded={mobileCalendarExpanded}
+                  className="calendar-toggle"
+                  onClick={() => setMobileCalendarExpanded((expanded) => !expanded)}
+                  size="sm"
+                  variant="outline"
+                >
+                  {mobileCalendarExpanded ? "Hide dates" : "Choose date"}
+                  <ChevronDown aria-hidden="true" />
+                </Button>
               </div>
             </CardHeader>
-            <CardContent className="calendar-card-content">
+            <CardContent
+              aria-label="Calendar dates"
+              className={`calendar-card-content${mobileCalendarExpanded ? "" : " calendar-mobile-collapsed"}`}
+              id="calendar-month-grid"
+            >
               {loading ? (
                 <div className="calendar-loading">
                   <Skeleton className="h-8 w-full" />
@@ -616,6 +638,7 @@ export function CalendarDashboard({
                     if (date) {
                       setSelectedDate(date);
                       setVisibleMonth(monthStart(date));
+                      setMobileCalendarExpanded(false);
                     }
                   }}
                   selected={selectedDate}

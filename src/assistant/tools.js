@@ -49,6 +49,21 @@ function validateTimeZone(timezone) {
   }
 }
 
+function getWebBaseUrl() {
+  if (!config.web.baseUrl) throw new Error('The Yvonne web app URL is not configured.');
+
+  let baseUrl;
+  try {
+    baseUrl = new URL(config.web.baseUrl);
+  } catch {
+    throw new Error('The Yvonne web app URL is invalid.');
+  }
+  if (baseUrl.protocol !== 'https:' && baseUrl.hostname !== 'localhost') {
+    throw new Error('The Yvonne web app URL must use HTTPS.');
+  }
+  return baseUrl;
+}
+
 export function createYvonneToolRegistry({ dataService, googleTasks }) {
   const registry = new ToolRegistry();
   const providerProperty = {
@@ -91,6 +106,26 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
   );
 
   registry.register(
+    functionTool('get_web_dashboard_link', 'Return the configured private Yvonne website URL only when the user asks to open, see, visit, or access the web UI/dashboard or asks where to manage Yvonne data online. Do not attach this link to routine confirmations or lists. Never invent or guess a domain or route. Choose the requested section when clear; otherwise use the calendar.', {
+      view: {
+        type: 'string',
+        enum: ['calendar', 'tasks', 'reminders', 'events'],
+        description: 'Dashboard section. Default to calendar unless the user asks for a specific section.'
+      }
+    }),
+    async ({ view = 'calendar' }) => {
+      if (!['calendar', 'tasks', 'reminders', 'events'].includes(view)) {
+        throw new Error('The dashboard view must be calendar, tasks, reminders, or events.');
+      }
+
+      const baseUrl = getWebBaseUrl();
+      const url = new URL('/calendar', baseUrl.origin);
+      if (view !== 'calendar') url.searchParams.set('view', view);
+      return { view, url: url.toString() };
+    }
+  );
+
+  registry.register(
     functionTool('get_web_item_link', 'Create a private Yvonne web link to an existing Supabase task, reminder, or calendar event when the user asks to view it online. The link requires the user to sign in; never invent an item ID or use Google Tasks.', {
       item_type: { type: 'string', enum: ['task', 'reminder', 'event'] },
       item_id: { type: 'string', description: 'Exact item ID returned by a Yvonne data tool.' }
@@ -100,12 +135,7 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
         throw new Error('The web link type must be task, reminder, or event.');
       }
       if (typeof item_id !== 'string' || !item_id.trim()) throw new Error('An exact item ID is required.');
-      if (!config.web.baseUrl) throw new Error('The Yvonne web app URL is not configured.');
-
-      const baseUrl = new URL(config.web.baseUrl);
-      if (baseUrl.protocol !== 'https:' && baseUrl.hostname !== 'localhost') {
-        throw new Error('The Yvonne web app URL must use HTTPS.');
-      }
+      const baseUrl = getWebBaseUrl();
       const getItem = {
         task: () => dataService.getTask(userJid, item_id),
         reminder: () => dataService.getReminder(userJid, item_id),

@@ -16,6 +16,16 @@ function requestsReminder(text) {
   return /\bremind me\b|\b(?:set|create|schedule|make)\b.{0,24}\b(?:alarm|reminder)\b|\b(?:alarm|reminder)\s+(?:at|for|tomorrow|today)\b/i.test(text);
 }
 
+function requestedDashboardView(text) {
+  if (!/\b(?:website|web\s*(?:app|page)?|dashboard|ui|interface|online|in the browser)\b/i.test(text)) return null;
+  if (!/\b(?:open|visit|go to|show|see|view|access|link|where|just|can i|could i)\b/i.test(text)) return null;
+
+  if (/\breminders?\b|\balarms?\b/i.test(text)) return 'reminders';
+  if (/\btasks?\b|\bto-?dos?\b/i.test(text)) return 'tasks';
+  if (/\bevents?\b/i.test(text)) return 'events';
+  return 'calendar';
+}
+
 function explicitlyRequestsTask(text) {
   const taskRequest = /\b(?:add|create|make|save)\b.{0,30}\btask\b/i.exec(text);
   const reminderRequest = /\bremind me\b|\b(?:set|create|schedule|make)\b.{0,24}\b(?:alarm|reminder)\b/i.exec(text);
@@ -62,6 +72,30 @@ export class YvonneAssistant {
 
   async respondWithMedia(userJid, text) {
     const history = this.conversations.get(userJid) || [];
+    const dashboardView = requestedDashboardView(text);
+    if (dashboardView) {
+      let reply;
+      try {
+        const link = await this.toolRegistry.execute(
+          'get_web_dashboard_link',
+          { view: dashboardView },
+          { userJid }
+        );
+        reply = `Here’s your Yvonne website: ${link.url}`;
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'The Yvonne web app URL is not configured.') {
+          throw error;
+        }
+        reply = 'I don’t have a Yvonne website URL configured on my server yet.';
+      }
+      this.conversations.set(userJid, [
+        ...history,
+        { role: 'user', content: text },
+        { role: 'assistant', content: reply }
+      ].slice(-12));
+      return { text: reply, media: null };
+    }
+
     const savedMemories = this.dataService
       ? (await this.dataService.listMemories(userJid))
         .filter(memory => memory.status === 'confirmed')
@@ -80,6 +114,8 @@ export class YvonneAssistant {
         content: [
           'You are Yvonne, a warm, practical personal assistant.',
           'Be concise and conversational. Ask a brief clarifying question when needed.',
+          'Never invent or guess URLs, domains, or routes. For requests to open or view the Yvonne website/dashboard, use get_web_dashboard_link and provide exactly its URL. If the URL is not configured, say so plainly.',
+          'Web UI link policy: attach a dashboard link only when the user asks to open, visit, view, see, or access the web UI, asks where to manage Yvonne data online, or requests a web link. Do not append links to routine task or reminder confirmations, ordinary lists, check-ins, or unrelated replies. For a dashboard section, use get_web_dashboard_link with the matching view; for a specific item, use get_web_item_link only with its exact ID from a data tool.',
           'Use only WhatsApp formatting: *bold*, _italic_, ~strikethrough~, and ```monospace```. Never use HTML tags, Markdown ** or __, or tables. Prefer short paragraphs and simple bullets.',
           'Tasks are to-dos and may have no due date. A task due date does not schedule a WhatsApp message. Reminders and alarms are separate scheduled notifications; use reminder tools for them and never count or report them as tasks. Create both only when the user explicitly asks for both.',
           'Send task image cards only when the user explicitly asks to see, show, list, or display their tasks. For task counts, due-date questions, reminders, or other requests, answer in text only.',

@@ -507,6 +507,10 @@
   padding: 0 18px 17px;
 }
 
+.calendar-toggle {
+  display: none;
+}
+
 .yvonne-calendar,
 .yvonne-calendar .rdp-months,
 .yvonne-calendar .rdp-month,
@@ -1115,10 +1119,22 @@
     padding: 0 10px;
   }
   .sidebar-section-label,
-  .task-list-heading,
-  .task-list-nav,
   .sidebar-bottom {
     display: none;
+  }
+  .task-list-heading {
+    margin: 10px 0 6px;
+  }
+  .task-list-heading .sidebar-section-label {
+    display: block;
+    margin: 0;
+  }
+  .task-list-nav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .task-list-link {
+    flex: 0 0 auto;
   }
   .dashboard-main {
     padding-top: 25px;
@@ -1156,11 +1172,18 @@
     padding-right: 11px;
     padding-left: 11px;
   }
+  .calendar-card-content.calendar-mobile-collapsed {
+    display: none;
+  }
+  .calendar-toggle {
+    display: inline-flex;
+    gap: 6px;
+  }
   .yvonne-calendar {
-    --cell-size: 2.45rem;
+    --cell-size: min(2.45rem, calc((100vw - 82px) / 7));
   }
   .calendar-day-button {
-    min-height: 42px;
+    min-height: 38px;
     border-radius: 10px !important;
   }
   .agenda-card {

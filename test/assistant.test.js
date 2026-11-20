@@ -317,6 +317,41 @@ test('assistant marks natural-language task lists for image-card delivery', asyn
   assert.equal(dueResponse.media, null);
 });
 
+test('assistant provides the configured website and selected dashboard section directly', async () => {
+  const originalBaseUrl = config.web.baseUrl;
+  config.web.baseUrl = 'https://yvonne-self.vercel.app';
+  const registry = createYvonneToolRegistry({ dataService: {}, googleTasks: null });
+  const assistant = new YvonneAssistant({
+    chat: {
+      completions: {
+        create: async () => {
+          throw new Error('Website requests should not depend on the language model.');
+        }
+      }
+    }
+  }, registry, 'test-model');
+
+  try {
+    const uiRequest = await assistant.respondWithMedia('user-1', 'Can I see it on a ui?');
+    assert.equal(uiRequest.text, 'Here’s your Yvonne website: https://yvonne-self.vercel.app/calendar');
+
+    const website = await assistant.respondWithMedia('user-1', 'noo, just the website');
+    assert.equal(website.text, 'Here’s your Yvonne website: https://yvonne-self.vercel.app/calendar');
+
+    const reminders = await assistant.respondWithMedia('user-1', 'Open reminders on the website');
+    assert.equal(reminders.text, 'Here’s your Yvonne website: https://yvonne-self.vercel.app/calendar?view=reminders');
+
+    const onlineReminders = await assistant.respondWithMedia('user-1', 'Where can I see my reminders online?');
+    assert.equal(onlineReminders.text, 'Here’s your Yvonne website: https://yvonne-self.vercel.app/calendar?view=reminders');
+
+    config.web.baseUrl = '';
+    const unconfigured = await assistant.respondWithMedia('user-1', 'Can you show me the website?');
+    assert.equal(unconfigured.text, 'I don’t have a Yvonne website URL configured on my server yet.');
+  } finally {
+    config.web.baseUrl = originalBaseUrl;
+  }
+});
+
 test('reminder creation confirmation reflects the saved record and never sends an unrequested task image', async () => {
   const registry = new ToolRegistry();
   registry.register({
