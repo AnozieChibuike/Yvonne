@@ -6,7 +6,27 @@ import {
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
-import { config } from '../config/env.js';
+import { config, isAllowedSender } from '../config/env.js';
+
+const OUTGOING_MESSAGE_TTL_MS = 60_000;
+
+function normalizeJid(jid) {
+  if (!jid) return null;
+  const [identifier, server] = jid.split('@');
+  if (!identifier || !server) return null;
+  return `${identifier.split(':')[0].replace(/\D/g, '')}@${server.toLowerCase()}`;
+}
+
+export function isAuthorizedSelfChat(sock, msg) {
+  const remoteJid = msg.key.remoteJid;
+  if (!remoteJid || remoteJid.includes('@g.us') || !isAllowedSender(remoteJid)) return false;
+
+  const remoteUser = normalizeJid(remoteJid);
+  const ownJids = [sock.user?.id, sock.user?.jid, sock.user?.lid]
+    .map(normalizeJid)
+    .filter(Boolean);
+  return ownJids.includes(remoteUser);
+}
 
 /**
  * Initializes and starts the Baileys WhatsApp client socket
@@ -24,6 +44,19 @@ export async function startWhatsAppClient(onMessageCallback, onSocketCreated = (
     logger,
     printQRInTerminal: false
   });
+  const outgoingMessageIds = new Map();
+  const sendMessage = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (...args) => {
+    const sentMessage = await sendMessage(...args);
+    if (sentMessage?.key?.id) {
+      const now = Date.now();
+      for (const [id, expiresAt] of outgoingMessageIds) {
+        if (expiresAt <= now) outgoingMessageIds.delete(id);
+      }
+      outgoingMessageIds.set(sentMessage.key.id, now + OUTGOING_MESSAGE_TTL_MS);
+    }
+    return sentMessage;
+  };
   onSocketCreated(sock);
 
   sock.ev.on('creds.update', saveCreds);
@@ -62,9 +95,23 @@ export async function startWhatsAppClient(onMessageCallback, onSocketCreated = (
     if (event.type !== 'notify') return;
 
     for (const msg of event.messages) {
-      // Ignore status updates, protocol messages, or messages from self
-      if (!msg.message || msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') {
+      if (!msg.message || msg.key.remoteJid === 'status@broadcast') {
         continue;
+      }
+
+      if (msg.key.fromMe) {
+        if (outgoingMessageIds.has(msg.key.id)) {
+          outgoingMessageIds.delete(msg.key.id);
+          continue;
+        }
+        if (!isAuthorizedSelfChat(sock, msg)) continue;
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (outgoingMessageIds.has(msg.key.id)) {
+          outgoingMessageIds.delete(msg.key.id);
+          continue;
+        }
+        console.log('Received an authorized self-chat message; forwarding it to Yvonne.');
       }
 
       try {

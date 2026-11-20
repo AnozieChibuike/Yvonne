@@ -205,6 +205,7 @@ export async function handleIncomingMessage(sock, msg, dependencies) {
     console.log(`Ignoring unauthorized WhatsApp message from ${senderJid || 'unknown sender'}.`);
     return;
   }
+  console.log('Received an authorized WhatsApp message; processing it.');
   const [senderIdentifier, senderServer] = senderJid.split('@');
   const senderNumber = normalizePhoneNumber(senderIdentifier.split(':')[0]);
   const userJid = `${senderNumber}@${senderServer.toLowerCase() === 'lid' ? 'lid' : 's.whatsapp.net'}`;

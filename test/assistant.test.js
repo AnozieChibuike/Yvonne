@@ -10,6 +10,7 @@ import {
   runCheckinTick
 } from '../src/services/checkinScheduler.js';
 import { config, isAllowedSender } from '../src/config/env.js';
+import { isAuthorizedSelfChat } from '../src/whatsapp/client.js';
 
 test('configured WhatsApp numbers and LIDs are allowlisted exactly', () => {
   const allowedJid = config.whatsapp.allowedJids[0];
@@ -27,6 +28,27 @@ test('WhatsApp LIDs are matched using their LID server and retained for storage'
   try {
     assert.equal(isAllowedSender(testLid), true);
     assert.equal(isAllowedSender('9876543210@s.whatsapp.net'), false);
+  } finally {
+    config.whatsapp.allowedJids.pop();
+  }
+});
+
+test('only an authorized direct self-chat is accepted as a from-me message', () => {
+  const phone = '2347040361805@s.whatsapp.net';
+  config.whatsapp.allowedJids.push(phone);
+  const [phoneId] = phone.split('@');
+  const socket = { user: { id: `${phoneId}:17@s.whatsapp.net` } };
+
+  try {
+    assert.equal(isAuthorizedSelfChat(socket, {
+      key: { remoteJid: phone, fromMe: true }
+    }), true);
+    assert.equal(isAuthorizedSelfChat(socket, {
+      key: { remoteJid: '123456789@s.whatsapp.net', fromMe: true }
+    }), false);
+    assert.equal(isAuthorizedSelfChat(socket, {
+      key: { remoteJid: '123456789@g.us', fromMe: true }
+    }), false);
   } finally {
     config.whatsapp.allowedJids.pop();
   }
