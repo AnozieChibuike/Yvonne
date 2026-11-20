@@ -5,12 +5,17 @@ import { createYvonneToolRegistry } from '../src/assistant/tools.js';
 import { YvonneAssistant } from '../src/assistant/yvonne.js';
 import {
   createCheckinMessage,
+  createReminderMessage,
+  formatReminderTime,
   getLocalDateAndTime,
   isCheckinDueNow,
-  runCheckinTick
+  runCheckinTick,
+  runReminderTick
 } from '../src/services/checkinScheduler.js';
+import { getNextReminderTime } from '../src/services/yvonneData.js';
 import { config, isAllowedSender } from '../src/config/env.js';
 import { isAuthorizedSelfChat } from '../src/whatsapp/client.js';
+import { handleIncomingMessage } from '../src/whatsapp/handler.js';
 
 test('configured WhatsApp numbers and LIDs are allowlisted exactly', () => {
   const allowedJid = config.whatsapp.allowedJids[0];
@@ -232,4 +237,128 @@ test('scheduler sends and records a matching local-time check-in once', async ()
   assert.match(sent[0].message.text, /Review notes/);
   assert.equal(finished.length, 1);
   assert.equal(finished[0][2], '2026-11-20');
+});
+
+test('reminder display uses Africa/Lagos local time and marks overdue delivery', () => {
+  const scheduledAt = '2026-11-20T06:00:00.000Z';
+  assert.match(formatReminderTime(scheduledAt), /20 Nov 2026/);
+  assert.match(createReminderMessage({
+    title: 'Call home',
+    kind: 'reminder',
+    remind_at: scheduledAt,
+    timezone: 'Africa/Lagos'
+  }, new Date('2026-11-20T08:00:00.000Z')), /scheduled for.*20 Nov 2026/);
+});
+
+test('recurring reminder is scheduled for its next Africa/Lagos local time', () => {
+  const nextAt = getNextReminderTime({
+    recurrence: 'daily',
+    timezone: 'Africa/Lagos',
+    local_time: '10:00'
+  }, new Date('2026-11-20T08:30:00.000Z'));
+
+  assert.equal(nextAt.toISOString(), '2026-11-21T09:00:00.000Z');
+});
+
+test('reminder scheduler delivers overdue reminder and relies on claim to prevent duplicates', async () => {
+  const sent = [];
+  const finished = [];
+  let canClaim = true;
+  const reminder = {
+    id: 'reminder-1',
+    user_jid: '234@s.whatsapp.net',
+    title: 'Call home',
+    kind: 'alarm',
+    remind_at: '2026-11-20T06:00:00.000Z',
+    timezone: 'Africa/Lagos',
+    recurrence: 'once'
+  };
+  const dataService = {
+    recoverStuckReminders: async () => {},
+    getDueReminders: async () => [reminder],
+    claimReminder: async () => {
+      if (!canClaim) return null;
+      canClaim = false;
+      return { id: reminder.id };
+    },
+    finishReminder: async (...args) => finished.push(args)
+  };
+  const options = {
+    allowedJids: [reminder.user_jid],
+    dataService,
+    getSocket: () => ({
+      sendMessage: async (jid, message) => sent.push({ jid, message })
+    }),
+    now: new Date('2026-11-20T08:00:00.000Z')
+  };
+
+  await runReminderTick(options);
+  await runReminderTick(options);
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].jid, reminder.user_jid);
+  assert.match(sent[0].message.text, /Alarm: Call home/);
+  assert.match(sent[0].message.text, /scheduled for/);
+  assert.equal(finished.length, 1);
+  assert.equal(finished[0][1], null);
+});
+
+test('onboarding answer is staged and saved only after explicit confirmation', async () => {
+  const allowedJid = config.whatsapp.allowedJids[0];
+  const sent = [];
+  const staged = [];
+  const confirmed = [];
+  let pendingAnswer = false;
+  const dataService = {
+    getUserProfile: async () => ({
+      onboarding_status: 'in_progress',
+      onboarding_step: 0,
+      pending_onboarding_step: pendingAnswer ? 0 : null,
+      pending_onboarding_answer: pendingAnswer ? 'Chibuike' : null
+    }),
+    saveOnboardingAnswer: async (...args) => {
+      staged.push(args);
+      pendingAnswer = true;
+    },
+    confirmOnboardingAnswer: async () => {
+      confirmed.push(true);
+      pendingAnswer = false;
+      return { status: 'in_progress', prompt: 'What should I help with?' };
+    }
+  };
+  const dependencies = {
+    dataService,
+    assistant: { respond: async () => assert.fail('onboarding must be handled deterministically') }
+  };
+  const sock = { sendMessage: async (jid, message) => sent.push({ jid, message }) };
+  const message = text => ({
+    key: { remoteJid: allowedJid, fromMe: false },
+    message: { conversation: text }
+  });
+
+  await handleIncomingMessage(sock, message('Chibuike'), dependencies);
+  assert.deepEqual(staged, [[allowedJid, 0, 'Chibuike']]);
+  assert.equal(confirmed.length, 0);
+  assert.match(sent.at(-1).message.text, /Reply yes or no/);
+
+  await handleIncomingMessage(sock, message('yes'), dependencies);
+  assert.equal(confirmed.length, 1);
+  assert.match(sent.at(-1).message.text, /What should I help with/);
+});
+
+test('reminder tool rejects date-times without an explicit timezone offset', async () => {
+  let created = false;
+  const registry = createYvonneToolRegistry({
+    dataService: { createReminder: async () => { created = true; } },
+    googleTasks: null
+  });
+
+  await assert.rejects(
+    registry.execute('create_reminder', {
+      title: 'Call home',
+      remind_at: '2026-11-20T10:00:00'
+    }, { userJid: '234@s.whatsapp.net' }),
+    /timezone offset/
+  );
+  assert.equal(created, false);
 });

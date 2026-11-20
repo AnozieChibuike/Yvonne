@@ -41,6 +41,58 @@ export function createCheckinMessage(checkinType, tasks) {
   return `${checkinPrompts[checkinType]}${tasksSection}`;
 }
 
+export function formatReminderTime(remindAt, timezone = 'Africa/Lagos') {
+  return new Intl.DateTimeFormat('en-NG', {
+    timeZone: timezone,
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(new Date(remindAt));
+}
+
+export function createReminderMessage(reminder, now = new Date()) {
+  const scheduledAt = new Date(reminder.remind_at);
+  const wasLate = now.getTime() - scheduledAt.getTime() > 60_000;
+  const lateNote = wasLate
+    ? ` (this was scheduled for ${formatReminderTime(reminder.remind_at, reminder.timezone)})`
+    : '';
+  const label = reminder.kind === 'alarm' ? '⏰ Alarm' : '🔔 Reminder';
+  return `${label}: ${reminder.title}${lateNote}`;
+}
+
+export async function runReminderTick({ allowedJids, dataService, getSocket, now = new Date() }) {
+  const sock = getSocket();
+  if (!sock) return;
+
+  try {
+    await dataService.recoverStuckReminders(new Date(now.getTime() - 5 * 60 * 1000), allowedJids);
+    const dueReminders = await dataService.getDueReminders(now, allowedJids);
+
+    for (const reminder of dueReminders) {
+      if (!allowedJids.includes(reminder.user_jid)) continue;
+
+      try {
+        const claimed = await dataService.claimReminder(reminder.id);
+        if (!claimed) continue;
+
+        await sock.sendMessage(reminder.user_jid, {
+          text: createReminderMessage(reminder, now)
+        });
+        await dataService.finishReminder(reminder, null, now);
+        console.log(`Delivered a scheduled ${reminder.kind} to an authorized user.`);
+      } catch (error) {
+        console.error(`Could not deliver a scheduled reminder (${reminder.id}):`, error);
+        try {
+          await dataService.finishReminder(reminder, error, now);
+        } catch (recordError) {
+          console.error(`Could not record reminder delivery failure (${reminder.id}):`, recordError);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Could not process scheduled reminders:', error);
+  }
+}
+
 export async function runCheckinTick({ allowedJids, dataService, getSocket, now = new Date() }) {
   for (const userJid of allowedJids) {
     let settings;
@@ -90,6 +142,7 @@ export async function runCheckinTick({ allowedJids, dataService, getSocket, now 
 export function startCheckinScheduler({ allowedJids, dataService, getSocket }) {
   return cron.schedule('* * * * *', async () => {
     await runCheckinTick({ allowedJids, dataService, getSocket });
+    await runReminderTick({ allowedJids, dataService, getSocket });
   }, { noOverlap: true });
 }
 

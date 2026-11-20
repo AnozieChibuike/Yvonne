@@ -5,6 +5,7 @@ import {
 import pino from 'pino';
 import { isAllowedSender, normalizePhoneNumber } from '../config/env.js';
 import { transcribeVoiceNote } from '../services/groq.js';
+import { formatReminderTime } from '../services/checkinScheduler.js';
 
 const MAX_VOICE_NOTE_BYTES = 25 * 1024 * 1024;
 const mediaLogger = pino({ level: 'silent' });
@@ -56,6 +57,8 @@ async function sendHelpMessage(sock, jid) {
 • \`!delete <number or id>\` — delete a task
 • \`!google tasks\`, \`!google add <title>\`, \`!google done <number or id>\`, \`!google delete <number or id>\` — use Google Tasks
 • \`!google lists\` and \`!google use <number>\` — choose a Google task list
+• \`!reminders\` — list scheduled reminders and alarms
+• \`!onboard\` / \`!skip\` — start or skip getting-to-know-you questions
 • \`!help\` — show this menu
 
 Supabase is the default task store; Google Tasks stays separate.`
@@ -191,6 +194,33 @@ async function handleCommand(sock, jid, userJid, text, dataService, googleTasks)
     return true;
   }
 
+  if (command === '!reminders') {
+    const reminders = await dataService.listReminders(userJid);
+    const rows = reminders.map(reminder => {
+      const kind = reminder.kind === 'alarm' ? 'Alarm' : 'Reminder';
+      const repeat = reminder.recurrence === 'once' ? '' : ` · ${reminder.recurrence}`;
+      return `• ${kind}: ${reminder.title} — ${formatReminderTime(reminder.remind_at, reminder.timezone)}${repeat}\n  ID: ${reminder.id}`;
+    });
+    await sock.sendMessage(jid, {
+      text: rows.length ? `🔔 *Your reminders*\n\n${rows.join('\n')}` : 'You have no scheduled reminders or alarms.'
+    });
+    return true;
+  }
+
+  if (command === '!onboard') {
+    await dataService.restartOnboarding(userJid);
+    await sock.sendMessage(jid, {
+      text: 'Let’s set up your Yvonne profile. What name should I use for you? You can reply `!skip` at any time.'
+    });
+    return true;
+  }
+
+  if (command === '!skip') {
+    await dataService.skipOnboarding(userJid);
+    await sock.sendMessage(jid, { text: 'No problem. I’ve stopped onboarding; you can start it later with `!onboard`.' });
+    return true;
+  }
+
   return handleTaskCommand(sock, jid, provider, command, args, dataService, googleTasks, session);
 }
 
@@ -260,8 +290,64 @@ export async function handleIncomingMessage(sock, msg, dependencies) {
       }
     }
 
+    const profile = await dependencies.dataService.getUserProfile(userJid);
+    if (profile.onboarding_status === 'in_progress') {
+      if (profile.pending_onboarding_step !== null) {
+        if (/^(yes|y|confirm|save)$/i.test(text.trim())) {
+          const result = await dependencies.dataService.confirmOnboardingAnswer(userJid);
+          const prompt = result?.prompt
+            ? ` ${result.prompt}`
+            : ' Your profile setup is complete.';
+          await sock.sendMessage(senderJid, { text: `Saved.${prompt}` });
+          return;
+        }
+        if (/^(no|n|reject|don'?t save)$/i.test(text.trim())) {
+          await dependencies.dataService.rejectOnboardingAnswer(userJid);
+          await sock.sendMessage(senderJid, { text: 'Okay, I did not save that. Please answer the question again, or use `!skip`.' });
+          return;
+        }
+        await sock.sendMessage(senderJid, {
+          text: `Should I save this answer: “${profile.pending_onboarding_answer}”? Reply yes or no.`
+        });
+        return;
+      }
+
+      await dependencies.dataService.saveOnboardingAnswer(
+        userJid,
+        profile.onboarding_step,
+        text
+      );
+      await sock.sendMessage(senderJid, {
+        text: `I heard: “${text}”. Should I save that to your profile? Reply yes or no.`
+      });
+      return;
+    }
+
+    if (profile.onboarding_status === 'completed' || profile.onboarding_status === 'skipped') {
+      const pendingMemory = await dependencies.dataService.getPendingMemory(userJid);
+      if (pendingMemory && /^(yes|y|confirm|save)$/i.test(text.trim())) {
+        const memory = await dependencies.dataService.resolvePendingMemory(userJid, true);
+        await sock.sendMessage(senderJid, {
+          text: memory ? `Got it — I’ll remember “${memory.memory_value}”.` : 'There is no memory waiting for confirmation.'
+        });
+        return;
+      }
+      if (pendingMemory && /^(no|n|reject|don'?t save)$/i.test(text.trim())) {
+        await dependencies.dataService.resolvePendingMemory(userJid, false);
+        await sock.sendMessage(senderJid, { text: 'Understood. I will not save that.' });
+        return;
+      }
+    }
+
     const reply = await dependencies.assistant.respond(userJid, text);
     await sock.sendMessage(senderJid, { text: reply });
+
+    if (profile.onboarding_status === 'pending') {
+      await dependencies.dataService.restartOnboarding(userJid);
+      await sock.sendMessage(senderJid, {
+        text: 'To get to know you a little, what name should I use for you? Reply `!skip` if you’d rather not do onboarding.'
+      });
+    }
   } catch (error) {
     console.error('Error processing Yvonne message:', error);
     await sock.sendMessage(senderJid, {

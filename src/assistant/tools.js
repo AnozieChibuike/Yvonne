@@ -1,4 +1,5 @@
 import { config } from '../config/env.js';
+import { formatReminderTime } from '../services/checkinScheduler.js';
 import { ToolRegistry } from './toolRegistry.js';
 
 function functionTool(name, description, properties, required = []) {
@@ -127,13 +128,96 @@ export function createYvonneToolRegistry({ dataService, googleTasks }) {
     async ({ key, value }, { userJid }) => {
       if (typeof key !== 'string' || !key.trim()) throw new Error('A preference key is required.');
       if (typeof value !== 'string' || !value.trim()) throw new Error('A preference value is required.');
-      return dataService.rememberPreference(userJid, key, value);
+      const preference = await dataService.rememberPreference(userJid, key, value);
+      const memory = await dataService.rememberMemory(userJid, key, value);
+      return { preference, memory };
+    }
+  );
+
+  registry.register(
+    functionTool('get_confirmed_memories', 'Read only user memories that were explicitly confirmed. Never treat proposed or rejected memories as facts.', {}),
+    async (_input, { userJid }) => (await dataService.listMemories(userJid))
+      .filter(memory => memory.status === 'confirmed')
+  );
+
+  registry.register(
+    functionTool('propose_memory', 'Suggest saving one stable personal fact or preference that may help later. This does not save it as true until the user explicitly confirms.', {
+      key: { type: 'string', description: 'Short stable memory label.' },
+      value: { type: 'string', description: 'The exact fact/preference the user stated.' }
+    }, ['key', 'value']),
+    async ({ key, value }, { userJid }) => {
+      if (typeof key !== 'string' || !key.trim()) throw new Error('A memory key is required.');
+      if (typeof value !== 'string' || !value.trim()) throw new Error('A memory value is required.');
+      return dataService.proposeMemory(userJid, key, value);
+    }
+  );
+
+  registry.register(
+    functionTool('forget_memory', 'Delete one previously saved memory when the user asks Yvonne to forget it.', {
+      key: { type: 'string', description: 'Exact memory key returned by get_confirmed_memories.' }
+    }, ['key']),
+    async ({ key }, { userJid }) => {
+      if (typeof key !== 'string' || !key.trim()) throw new Error('A memory key is required.');
+      const forgotten = await dataService.forgetMemory(userJid, key);
+      if (!forgotten) throw new Error('No saved memory or preference was found with that key.');
+      return forgotten;
     }
   );
 
   registry.register(
     functionTool('get_checkin_schedule', 'Read your current morning, daytime, and evening check-in times and enabled states.', {}),
     async (_input, { userJid }) => dataService.listCheckinSettings(userJid)
+  );
+
+  registry.register(
+    functionTool('create_reminder', 'Schedule a WhatsApp reminder. Use Africa/Lagos local time. If the date or exact time is ambiguous, ask before calling this. Ordinary reminders default to one-time; daily/weekly recurrence must be explicitly requested. Return the reminder ID and scheduled local time.', {
+      title: { type: 'string', description: 'What to remind the user about.' },
+      remind_at: { type: 'string', description: 'ISO 8601 date-time including an explicit timezone offset, interpreted as Africa/Lagos local time.' },
+      kind: { type: 'string', enum: ['reminder', 'alarm'], description: 'Use alarm only when the user calls it an alarm.' },
+      recurrence: { type: 'string', enum: ['once', 'daily', 'weekly'], description: 'Default once. Use daily or weekly only when explicitly requested.' }
+    }, ['title', 'remind_at']),
+    async ({ title, remind_at, kind = 'reminder', recurrence = 'once' }, { userJid }) => {
+      if (typeof title !== 'string' || !title.trim()) throw new Error('Reminder title cannot be empty.');
+      if (typeof remind_at !== 'string' || !/(Z|[+-]\d{2}:\d{2})$/i.test(remind_at) || Number.isNaN(Date.parse(remind_at))) {
+        throw new Error('remind_at must be a valid ISO date-time with a timezone offset.');
+      }
+      if (Date.parse(remind_at) <= Date.now()) {
+        throw new Error('That reminder time is in the past. Ask the user for a future time.');
+      }
+      if (!['reminder', 'alarm'].includes(kind)) throw new Error('Reminder kind must be reminder or alarm.');
+      if (!['once', 'daily', 'weekly'].includes(recurrence)) throw new Error('Recurrence must be once, daily, or weekly.');
+      const reminder = await dataService.createReminder(userJid, {
+        title,
+        remindAt: remind_at,
+        kind,
+        recurrence,
+        timezone: 'Africa/Lagos'
+      });
+      return {
+        ...reminder,
+        remind_at_local: formatReminderTime(reminder.remind_at, reminder.timezone)
+      };
+    }
+  );
+
+  registry.register(
+    functionTool('list_reminders', 'List scheduled one-time reminders and alarms, including their ID and Africa/Lagos time.', {}),
+    async (_input, { userJid }) => (await dataService.listReminders(userJid)).map(reminder => ({
+      ...reminder,
+      remind_at_local: formatReminderTime(reminder.remind_at, reminder.timezone)
+    }))
+  );
+
+  registry.register(
+    functionTool('cancel_reminder', 'Cancel a scheduled reminder or alarm by its exact ID. Only cancel when the user clearly asks.', {
+      reminder_id: { type: 'string', description: 'Exact ID returned by list_reminders.' }
+    }, ['reminder_id']),
+    async ({ reminder_id }, { userJid }) => {
+      if (typeof reminder_id !== 'string' || !reminder_id.trim()) throw new Error('A reminder ID is required.');
+      const result = await dataService.cancelReminder(userJid, reminder_id);
+      if (!result) throw new Error('That reminder was not found or is no longer scheduled.');
+      return result;
+    }
   );
 
   registry.register(

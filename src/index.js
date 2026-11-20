@@ -39,10 +39,11 @@ async function main() {
   const googleTasks = await createGoogleTasksService();
   const groq = createGroqClient();
   const toolRegistry = createYvonneToolRegistry({ dataService, googleTasks });
-  const assistant = new YvonneAssistant(groq, toolRegistry, config.groq.model);
+  const assistant = new YvonneAssistant(groq, toolRegistry, config.groq.model, dataService);
   const defaultCheckins = getDefaultCheckinSettings();
 
   for (const userJid of config.whatsapp.allowedJids) {
+    await dataService.ensureUserProfile(userJid);
     await dataService.ensureDefaultCheckins(userJid, defaultCheckins);
   }
 

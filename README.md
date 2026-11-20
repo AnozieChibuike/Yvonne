@@ -7,7 +7,9 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
 - Chat naturally over WhatsApp, restricted to the numbers and LIDs in `ALLOWED_NUMBERS`.
 - Create, list, complete, and delete Supabase tasks; explicitly request Google Tasks to use that separate provider.
 - Transcribe incoming WhatsApp voice notes and reply with text.
-- Save preferences when you ask Yvonne to remember them.
+- Create, list, and cancel one-time reminders and alarms; explicitly requested daily or weekly reminders repeat.
+- Send overdue reminders after a VPS restart, with the original scheduled time included.
+- Ask before saving profile answers or suggested memories; only confirmed memories are included in future context.
 - Send morning, daytime, and evening check-ins using each user's saved local time and timezone.
 - Add capabilities through the assistant tool registry without putting integrations into the WhatsApp message handler.
 
@@ -28,7 +30,7 @@ Yvonne is a personal assistant that runs on WhatsApp. It uses Groq for chat and 
    ```
 
 2. Copy `.env.example` to `.env` and set `GROQ_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and comma-separated `ALLOWED_NUMBERS`. Use international digits for phone numbers; include `@lid` for a WhatsApp LID. Keep `.env` private; never paste credentials into chat or commit them.
-3. In the Supabase SQL editor, run [`supabase/migrations/20261120100000_yvonne.sql`](./supabase/migrations/20261120100000_yvonne.sql). It creates the tasks, preferences, check-in settings, and delivery-tracking tables with row-level security enabled.
+3. In the Supabase SQL editor, run [`supabase/migrations/20261120100000_yvonne.sql`](./supabase/migrations/20261120100000_yvonne.sql) followed by [`supabase/migrations/20261120114500_reminders_and_memory.sql`](./supabase/migrations/20261120114500_reminders_and_memory.sql). These create the tasks, preferences, check-in, reminder, profile, and memory tables with row-level security enabled.
 4. Configure `CHECKIN_TIMEZONE` and the morning/daytime/evening times. Defaults are `Africa/Lagos`, `07:00`, `13:00`, and `21:00`. Yvonne seeds these defaults only for check-in types that do not already have saved settings.
 5. Start Yvonne:
 
@@ -67,7 +69,9 @@ Follow the terminal prompts to create the local `token.json`. Google Tasks is no
 | `!google delete <number or id>` | Delete a Google task |
 | `!google lists` / `!google use <number>` | Browse and select a Google task list |
 
-You can also ask naturally, for example: “Remember that I prefer short meetings,” “Add a task to renew my passport,” or “Move my evening check-in to 9:30 pm.” Supabase is the default task provider; Google Tasks stays separate.
+Reminders and alarms use `Africa/Lagos` local time by default. Ask Yvonne naturally, for example: “Remind me tomorrow at 9 am to call Mum,” “Set an alarm for 6:30 tomorrow,” or “List my reminders.” Ambiguous dates or times should be clarified before saving. One-time delivery is the default; specify a repeat schedule for recurring reminders. `!reminders` lists scheduled alerts. If Yvonne is offline at the scheduled time, it sends the overdue alert after reconnecting and includes the original time.
+
+Yvonne starts a short onboarding after your first interaction; each answer is staged and saved only after you confirm it. Use `!skip` to stop or `!onboard` to start again. You can also ask naturally, for example: “Remember that I prefer short meetings,” “Add a task to renew my passport,” or “Move my evening check-in to 9:30 pm.” Supabase is the default task provider; Google Tasks stays separate.
 
 ## Adding a tool
 
